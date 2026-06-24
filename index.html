@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bacterial Colony Counter</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+
+/* ── CSS custom properties (updated by JS on theme switch) ── */
+:root{
+  --bg:#464f61;--fg:#f1f5f9;--hint:#c0cad8;
+  --entry-bg:#3d4655;--entry-fg:#f1f5f9;
+  --sep:#68778a;--btn-bg:#68778a;--btn-fg:#f1f5f9;--btn-act:#78889a;
+  --run-bg:#60a5fa;--run-fg:#1e3a5f;--run-act:#3b82f6;
+  --title-fg:#93c5fd;--log-bg:#3d4655;--log-fg:#c0cad8;
+  --canvas-bg:#555f71;--tog-track:#3a4352;
+  --tog-sel:#60a5fa;--tog-sel-fg:#1e3a5f;--tog-fg:#8896ab;
+  --tx:background .25s,color .25s,border-color .25s,fill .25s;
+}
+
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+     background:var(--bg);color:var(--fg);min-height:100vh;transition:var(--tx)}
+
+/* ── Layout ── */
+#app{display:flex;flex-direction:column;min-height:100vh}
+#top-row{display:flex}
+#settings{flex:1;padding:22px 22px 18px;transition:var(--tx)}
+#anim-panel{width:304px;flex-shrink:0;background:var(--canvas-bg);
+            display:flex;flex-direction:column;align-items:center;
+            padding:12px;gap:10px;border-left:1px solid var(--sep);transition:var(--tx)}
+.sep-h{height:1px;background:var(--sep);transition:var(--tx)}
+#bottom-row{flex:1;background:var(--bg);padding:14px 22px;
+            display:flex;flex-direction:column;transition:var(--tx)}
+
+/* ── Mode toggle pill ── */
+#mode-toggle{display:flex;background:var(--tog-track);border-radius:8px;
+             padding:2px;cursor:pointer;transition:var(--tx);user-select:none}
+.tog-seg{width:39px;height:28px;display:flex;align-items:center;justify-content:center;
+         border-radius:6px;font-size:15px;color:var(--tog-fg);transition:.18s;cursor:pointer}
+.tog-seg.active{background:var(--tog-sel);color:var(--tog-sel-fg)}
+
+/* ── Animation canvas ── */
+#anim-canvas{width:280px;height:280px;border-radius:4px;display:block}
+
+/* ── Settings typography ── */
+#app-title{font-size:17px;font-weight:700;color:var(--title-fg);margin-bottom:18px;transition:var(--tx)}
+.lbl{display:block;font-size:10px;font-weight:700;text-transform:uppercase;
+     letter-spacing:.05em;color:var(--hint);margin-bottom:5px;transition:var(--tx)}
+.hint{font-size:11px;color:var(--hint);margin-top:3px;transition:var(--tx)}
+.fg{margin-bottom:12px}
+
+/* ── Three-column row ── */
+.row3{display:flex;gap:10px;margin-bottom:12px}
+.col{flex:1}
+
+/* ── Inputs / selects ── */
+input,select{width:100%;background:var(--entry-bg);color:var(--fg);border:none;
+             border-radius:5px;padding:7px 10px;font-size:13px;outline:none;
+             transition:var(--tx);font-family:inherit}
+input::placeholder{color:var(--hint)}
+input[type=number]{-moz-appearance:textfield}
+input[type=number]::-webkit-inner-spin-button{opacity:.4}
+select option{background:var(--entry-bg)}
+
+/* ── Drop zone ── */
+#drop-zone{display:flex;align-items:center;gap:8px;background:var(--entry-bg);
+           border-radius:5px;padding:7px 10px;cursor:pointer;
+           transition:var(--tx);margin-bottom:12px}
+#drop-zone:hover,#drop-zone.over{filter:brightness(1.12)}
+#drop-zone.over{outline:2px solid var(--run-bg)}
+#file-name{flex:1;font-size:13px;color:var(--hint);overflow:hidden;
+           text-overflow:ellipsis;white-space:nowrap;transition:var(--tx)}
+#file-name.loaded{color:var(--fg)}
+
+/* ── Small button ── */
+.btn{background:var(--btn-bg);color:var(--btn-fg);border:none;border-radius:5px;
+     padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;
+     transition:var(--tx);font-family:inherit}
+.btn:hover{background:var(--btn-act)}
+
+/* ── Checkboxes ── */
+.cb-row{display:flex;gap:20px;margin-bottom:12px}
+.cb-lbl{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
+.cb-lbl input{cursor:pointer;accent-color:var(--run-bg);width:14px;height:14px}
+
+/* ── Sat row ── */
+.sat-row{display:flex;align-items:center;gap:8px}
+.sat-row input{width:80px;flex-shrink:0}
+
+/* ── Advanced panel ── */
+#adv-btn{background:var(--btn-bg);color:var(--btn-fg);border:none;border-radius:5px;
+         padding:7px 12px;font-size:13px;text-align:left;width:100%;
+         cursor:pointer;transition:var(--tx);font-family:inherit;margin-top:4px}
+#adv-btn:hover{background:var(--btn-act)}
+#adv-panel{display:none;background:var(--entry-bg);border-radius:6px;
+           padding:12px;margin-top:6px;transition:var(--tx)}
+#adv-panel.open{display:block}
+.adv-row{display:flex;gap:16px}
+.adv-col{flex:1}
+.adv-col .lbl{margin-bottom:4px}
+.adv-col .hint{font-size:10px}
+
+/* ── Log ── */
+#log-lbl{font-size:10px;font-weight:700;text-transform:uppercase;
+         letter-spacing:.05em;color:var(--hint);margin-bottom:6px;transition:var(--tx)}
+#log{min-height:130px;background:var(--log-bg);color:var(--log-fg);border-radius:6px;
+     padding:10px 12px;font-family:'Courier New',monospace;font-size:12px;
+     overflow-y:auto;white-space:pre-wrap;margin-bottom:10px;transition:var(--tx)}
+#run-row{display:flex;align-items:center;justify-content:space-between}
+#status{font-size:12px;color:var(--hint);transition:var(--tx)}
+#run-btn{background:var(--run-bg);color:var(--run-fg);border:none;border-radius:7px;
+         padding:10px 24px;font-size:14px;font-weight:700;cursor:pointer;
+         transition:var(--tx);font-family:inherit}
+#run-btn:hover:not(:disabled){background:var(--run-act)}
+#run-btn:disabled{opacity:.45;cursor:not-allowed}
+
+/* ── Result panel ── */
+#result-panel{display:none;background:var(--bg);padding:0 22px 22px;transition:var(--tx)}
+.res-hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+#res-count{font-size:22px;font-weight:700;color:var(--title-fg);transition:var(--tx)}
+#res-acc{font-size:13px;color:var(--hint);transition:var(--tx)}
+#res-canvas{max-width:100%;border-radius:6px;display:block}
+#dl-btn{margin-top:10px}
+</style>
+</head>
+<body>
+<div id="app">
+
+<!-- ═══════════ TOP ROW ═══════════ -->
+<div id="top-row">
+
+  <!-- LEFT: settings -->
+  <div id="settings">
+    <div id="app-title">Bacterial Colony Counter</div>
+
+    <!-- Image drop zone -->
+    <div class="lbl">Image file</div>
+    <div id="drop-zone">
+      <span id="file-name">Drag &amp; drop or click to browse…</span>
+      <button class="btn" onclick="document.getElementById('fi').click()">Browse</button>
+    </div>
+    <input type="file" id="fi" accept="image/*" style="display:none">
+
+    <!-- Three-column row -->
+    <div class="row3">
+      <div class="col">
+        <span class="lbl">Manual count</span>
+        <input type="number" id="manual" placeholder="Optional" min="0">
+        <div class="hint">Leave blank if unknown</div>
+      </div>
+      <div class="col">
+        <span class="lbl">Plate type</span>
+        <select id="plate">
+          <option value="standard">standard</option>
+          <option value="light_agar">light_agar</option>
+        </select>
+        <div class="hint" id="plate-hint">Dark agar — LB / LB-Amp plates</div>
+      </div>
+      <div class="col">
+        <span class="lbl">Colony size</span>
+        <select id="size">
+          <option value="tiny">tiny</option>
+          <option value="medium" selected>medium</option>
+          <option value="large">large</option>
+          <option value="mixed">mixed</option>
+        </select>
+        <div class="hint" id="size-hint">0.1 – 2.0 mm diameter</div>
+      </div>
+    </div>
+
+    <!-- Checkboxes -->
+    <div class="cb-row">
+      <label class="cb-lbl"><input type="checkbox" id="grid"> Grid lines visible</label>
+      <label class="cb-lbl"><input type="checkbox" id="save" checked> Download result</label>
+    </div>
+
+    <!-- Satellite exclusion -->
+    <div class="fg">
+      <span class="lbl">Exclude colonies smaller than</span>
+      <div class="sat-row">
+        <input type="number" id="sat" value="0.0" step="0.1" min="0">
+        <span class="hint">mm &nbsp;(0.0 = off)</span>
+      </div>
+    </div>
+
+    <!-- Advanced -->
+    <button id="adv-btn" onclick="toggleAdv()">▶&nbsp; Advanced settings</button>
+    <div id="adv-panel">
+      <div class="adv-row">
+        <div class="adv-col">
+          <span class="lbl">Min circularity</span>
+          <input type="number" id="circ" value="0.30" step="0.05" min="0" max="1">
+          <div class="hint">0.30 permissive · 0.55 strict</div>
+        </div>
+        <div class="adv-col">
+          <span class="lbl">BG sigma (0 = auto)</span>
+          <input type="number" id="sigma" value="0" min="0">
+          <div class="hint">Larger = more bg removed</div>
+        </div>
+        <div class="adv-col">
+          <span class="lbl">Threshold offset</span>
+          <input type="number" id="toff" value="0">
+          <div class="hint">+ fewer &nbsp;· − more</div>
+        </div>
+      </div>
+    </div>
+  </div><!-- /settings -->
+
+  <!-- RIGHT: animation + toggle -->
+  <div id="anim-panel">
+    <div id="mode-toggle">
+      <div class="tog-seg" data-m="light"   title="Light"   onclick="setMode('light')">☀</div>
+      <div class="tog-seg active" data-m="default" title="Default" onclick="setMode('default')">◑</div>
+      <div class="tog-seg" data-m="dark"    title="Dark"    onclick="setMode('dark')">☾</div>
+    </div>
+    <canvas id="anim-canvas" width="280" height="280"></canvas>
+  </div>
+
+</div><!-- /top-row -->
+
+<div class="sep-h"></div>
+
+<!-- ═══════════ BOTTOM: log + run ═══════════ -->
+<div id="bottom-row">
+  <div id="log-lbl">Output log</div>
+  <div id="log">Ready. Load an image and click Run Analysis.</div>
+  <div id="run-row">
+    <span id="status">Ready.</span>
+    <button id="run-btn" onclick="runAnalysis()">Run Analysis</button>
+  </div>
+</div>
+
+<div class="sep-h" id="res-sep" style="display:none"></div>
+
+<!-- ═══════════ RESULT ═══════════ -->
+<div id="result-panel">
+  <div class="res-hdr">
+    <span id="res-count"></span>
+    <span id="res-acc"></span>
+  </div>
+  <canvas id="res-canvas"></canvas>
+  <button class="btn" id="dl-btn" onclick="downloadResult()" style="margin-top:10px">
+    Download result image
+  </button>
+</div>
+
+</div><!-- /app -->
+<script>
+'use strict';
+
+// ════════════════════════════════════════════════════════════
+// THEMES  (exact colours from the desktop app)
+// ════════════════════════════════════════════════════════════
+const THEMES = {
+  light: {
+    '--bg':'#ffffff','--fg':'#1e293b','--hint':'#64748b',
+    '--entry-bg':'#f1f5f9','--entry-fg':'#1e293b',
+    '--sep':'#dde3ee','--btn-bg':'#e2e8f0','--btn-fg':'#334155','--btn-act':'#c8d3e3',
+    '--run-bg':'#2563eb','--run-fg':'#334155','--run-act':'#1d4ed8',
+    '--title-fg':'#1d4ed8','--log-bg':'#f8fafc','--log-fg':'#334155',
+    '--canvas-bg':'#eef2f7','--tog-track':'#dde3ee',
+    '--tog-sel':'#2563eb','--tog-sel-fg':'#ffffff','--tog-fg':'#94a3b8',
+  },
+  default: {
+    '--bg':'#464f61','--fg':'#f1f5f9','--hint':'#c0cad8',
+    '--entry-bg':'#3d4655','--entry-fg':'#f1f5f9',
+    '--sep':'#68778a','--btn-bg':'#68778a','--btn-fg':'#f1f5f9','--btn-act':'#78889a',
+    '--run-bg':'#60a5fa','--run-fg':'#1e3a5f','--run-act':'#3b82f6',
+    '--title-fg':'#93c5fd','--log-bg':'#3d4655','--log-fg':'#c0cad8',
+    '--canvas-bg':'#555f71','--tog-track':'#3a4352',
+    '--tog-sel':'#60a5fa','--tog-sel-fg':'#1e3a5f','--tog-fg':'#8896ab',
+  },
+  dark: {
+    '--bg':'#2e2e2e','--fg':'#f1f5f9','--hint':'#909090',
+    '--entry-bg':'#2a2a2a','--entry-fg':'#334155',
+    '--sep':'#505050','--btn-bg':'#4a4a4a','--btn-fg':'#334155','--btn-act':'#5a5a5a',
+    '--run-bg':'#5b8dee','--run-fg':'#334155','--run-act':'#4070d4',
+    '--title-fg':'#7eb8f7','--log-bg':'#222222','--log-fg':'#c0c0c0',
+    '--canvas-bg':'#3a3a3a','--tog-track':'#252525',
+    '--tog-sel':'#5b8dee','--tog-sel-fg':'#334155','--tog-fg':'#666666',
+  },
+};
+
+let curMode = 'default';
+
+function setMode(m) {
+  curMode = m;
+  const root = document.documentElement;
+  for (const [k,v] of Object.entries(THEMES[m])) root.style.setProperty(k, v);
+  document.querySelectorAll('.tog-seg').forEach(el =>
+    el.classList.toggle('active', el.dataset.m === m));
+}
+
+// ════════════════════════════════════════════════════════════
+// ANIMATION — all three videos play in parallel (muted, hidden);
+// a requestAnimationFrame loop copies the active one to the canvas.
+// Switching themes is instant and seamless.
+// ════════════════════════════════════════════════════════════
+const VID_SRCS = {
+  light:   'assets/anim_light.mp4',
+  default: 'assets/anim_default.mp4',
+  dark:    'assets/anim_dark.mp4',
+};
+const pool = {};
+const animCtx = document.getElementById('anim-canvas').getContext('2d');
+const ANIM_W = 280, ANIM_H = 280;
+
+function initAnim() {
+  let ready = 0;
+  const total = Object.keys(VID_SRCS).length;
+
+  for (const [m, src] of Object.entries(VID_SRCS)) {
+    const v = Object.assign(document.createElement('video'),
+      { src, muted:true, loop:true, playsInline:true });
+    v.setAttribute('playsinline','');
+    v.style.cssText = 'position:fixed;top:-9999px;width:1px;height:1px;opacity:0';
+    document.body.appendChild(v);
+    pool[m] = v;
+
+    const tryPlay = () => { v.play().catch(()=>{}); };
+    v.addEventListener('canplay', () => { tryPlay(); if (++ready === total) schedFrameLoop(); }, {once:true});
+    v.addEventListener('error',   () => { if (++ready === total) schedFrameLoop(); }, {once:true});
+    v.load();
+  }
+
+  // Fallback: start loop even if videos never fire canplay (e.g. file not found)
+  setTimeout(schedFrameLoop, 2000);
+}
+
+let loopStarted = false;
+function schedFrameLoop() {
+  if (loopStarted) return;
+  loopStarted = true;
+  frameLoop();
+}
+
+function frameLoop() {
+  const v = pool[curMode];
+  if (v && v.readyState >= 2) {
+    animCtx.drawImage(v, 0, 0, ANIM_W, ANIM_H);
+  } else {
+    // Placeholder gradient
+    const t = THEMES[curMode];
+    const g = animCtx.createLinearGradient(0, 0, 0, ANIM_H);
+    g.addColorStop(0, t['--canvas-bg']);
+    g.addColorStop(1, darken(t['--canvas-bg'], 20));
+    animCtx.fillStyle = g;
+    animCtx.fillRect(0, 0, ANIM_W, ANIM_H);
+    animCtx.fillStyle = THEMES[curMode]['--hint'];
+    animCtx.font = '12px -apple-system,sans-serif';
+    animCtx.textAlign = 'center';
+    animCtx.fillText('Place anim_light/default/dark.mp4', ANIM_W/2, ANIM_H/2-8);
+    animCtx.fillText('in assets/ folder', ANIM_W/2, ANIM_H/2+10);
+  }
+  requestAnimationFrame(frameLoop);
+}
+
+function darken(hex, amt) {
+  const n = parseInt(hex.slice(1),16);
+  const r = Math.max(0,((n>>16)&255)-amt);
+  const g = Math.max(0,((n>>8)&255)-amt);
+  const b = Math.max(0,(n&255)-amt);
+  return '#'+[r,g,b].map(x=>x.toString(16).padStart(2,'0')).join('');
+}
+
+// ════════════════════════════════════════════════════════════
+// FILE HANDLING
+// ════════════════════════════════════════════════════════════
+let loadedImg = null;
+
+const dz = document.getElementById('drop-zone');
+const fi = document.getElementById('fi');
+const fn = document.getElementById('file-name');
+
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('over'));
+dz.addEventListener('drop', e => {
+  e.preventDefault(); dz.classList.remove('over');
+  const f = e.dataTransfer.files[0];
+  if (f && f.type.startsWith('image/')) loadFile(f);
+});
+dz.addEventListener('click', () => fi.click());
+fi.addEventListener('change', () => { if (fi.files[0]) loadFile(fi.files[0]); });
+
+function loadFile(f) {
+  fn.textContent = f.name; fn.classList.add('loaded');
+  const r = new FileReader();
+  r.onload = e => {
+    const img = new Image();
+    img.onload = () => { loadedImg = img; log(`Image loaded: ${img.width}×${img.height} px`); };
+    img.src = e.target.result;
+  };
+  r.readAsDataURL(f);
+}
+
+// ════════════════════════════════════════════════════════════
+// UI HELPERS
+// ════════════════════════════════════════════════════════════
+const PLATE_HINTS = {standard:'Dark agar — LB / LB-Amp plates', light_agar:'Cream agar — use satellite exclusion'};
+const SIZE_HINTS  = {tiny:'< 0.6 mm', medium:'0.1 – 2.0 mm', large:'0.8 – 7.0 mm', mixed:'any size'};
+
+document.getElementById('plate').addEventListener('change', e =>
+  document.getElementById('plate-hint').textContent = PLATE_HINTS[e.target.value]||'');
+document.getElementById('size').addEventListener('change', e =>
+  document.getElementById('size-hint').textContent = SIZE_HINTS[e.target.value]||'');
+
+let advOpen = false;
+function toggleAdv() {
+  advOpen = !advOpen;
+  document.getElementById('adv-panel').classList.toggle('open', advOpen);
+  document.getElementById('adv-btn').textContent = (advOpen?'▼':'▶') + '  Advanced settings';
+}
+
+function log(msg) {
+  const el = document.getElementById('log');
+  el.textContent += (el.textContent ? '\n' : '') + msg;
+  el.scrollTop = el.scrollHeight;
+}
+function setStatus(msg) { document.getElementById('status').textContent = msg; }
+
+// ════════════════════════════════════════════════════════════
+// IMAGE PROCESSING  (pure JS, O(W·H) pipeline)
+// ════════════════════════════════════════════════════════════
+const MAX_DIM = 900;
+
+function resized(img) {
+  const sc = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
+  const w = Math.round(img.width*sc), h = Math.round(img.height*sc);
+  const c = document.createElement('canvas');
+  c.width=w; c.height=h;
+  c.getContext('2d').drawImage(img, 0, 0, w, h);
+  return {c, sc, w, h};
+}
+
+function toGray(data, n) {
+  const g = new Uint8Array(n);
+  for (let i=0;i<n;i++) g[i] = 0.299*data[i*4] + 0.587*data[i*4+1] + 0.114*data[i*4+2];
+  return g;
+}
+
+// O(W·H) box blur via integral image
+function integral(g, w, h) {
+  const ii = new Float64Array((w+1)*(h+1));
+  for (let y=0;y<h;y++)
+    for (let x=0;x<w;x++)
+      ii[(y+1)*(w+1)+(x+1)] = g[y*w+x]+ii[y*(w+1)+(x+1)]+ii[(y+1)*(w+1)+x]-ii[y*(w+1)+x];
+  return ii;
+}
+function boxBlur(g, w, h, r) {
+  const ii=integral(g,w,h), out=new Uint8Array(w*h);
+  for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
+    const x0=Math.max(0,x-r),y0=Math.max(0,y-r),x1=Math.min(w-1,x+r),y1=Math.min(h-1,y+r);
+    const s=ii[(y1+1)*(w+1)+(x1+1)]-ii[y0*(w+1)+(x1+1)]-ii[(y1+1)*(w+1)+x0]+ii[y0*(w+1)+x0];
+    out[y*w+x]=s/((x1-x0+1)*(y1-y0+1));
+  }
+  return out;
+}
+function gaussBlur(g, w, h, sigma) {
+  const r=Math.max(1,Math.round(sigma*0.85));
+  return boxBlur(boxBlur(boxBlur(g,w,h,r),w,h,r),w,h,r);
+}
+
+// O(W·H) separable erosion / dilation using prefix sums (any kernel size)
+function erodeH(b,w,h,kw) {
+  const hw=Math.floor(kw/2), out=new Uint8Array(w*h);
+  for (let y=0;y<h;y++) {
+    const ps=new Int32Array(w+1);
+    for (let x=0;x<w;x++) ps[x+1]=ps[x]+b[y*w+x];
+    for (let x=0;x<w;x++) {
+      if (x-hw<0||x+hw>=w) { out[y*w+x]=0; continue; }
+      out[y*w+x]=(ps[x+hw+1]-ps[x-hw]===kw)?1:0;
+    }
+  }
+  return out;
+}
+function erodeV(b,w,h,kh) {
+  const hh=Math.floor(kh/2), out=new Uint8Array(w*h);
+  for (let x=0;x<w;x++) {
+    const ps=new Int32Array(h+1);
+    for (let y=0;y<h;y++) ps[y+1]=ps[y]+b[y*w+x];
+    for (let y=0;y<h;y++) {
+      if (y-hh<0||y+hh>=h) { out[y*w+x]=0; continue; }
+      out[y*w+x]=(ps[y+hh+1]-ps[y-hh]===kh)?1:0;
+    }
+  }
+  return out;
+}
+function dilateH(b,w,h,kw) {
+  const hw=Math.floor(kw/2), out=new Uint8Array(w*h);
+  for (let y=0;y<h;y++) {
+    const ps=new Int32Array(w+1);
+    for (let x=0;x<w;x++) ps[x+1]=ps[x]+b[y*w+x];
+    for (let x=0;x<w;x++) {
+      const x0=Math.max(0,x-hw),x1=Math.min(w-1,x+hw);
+      out[y*w+x]=(ps[x1+1]-ps[x0]>0)?1:0;
+    }
+  }
+  return out;
+}
+function dilateV(b,w,h,kh) {
+  const hh=Math.floor(kh/2), out=new Uint8Array(w*h);
+  for (let x=0;x<w;x++) {
+    const ps=new Int32Array(h+1);
+    for (let y=0;y<h;y++) ps[y+1]=ps[y]+b[y*w+x];
+    for (let y=0;y<h;y++) {
+      const y0=Math.max(0,y-hh),y1=Math.min(h-1,y+hh);
+      out[y*w+x]=(ps[y1+1]-ps[y0]>0)?1:0;
+    }
+  }
+  return out;
+}
+function erode(b,w,h,kw,kh) { return erodeV(erodeH(b,w,h,kw),w,h,kh); }
+function dilate(b,w,h,kw,kh){ return dilateV(dilateH(b,w,h,kw),w,h,kh);}
+function morphOpen(b,w,h,kw,kh){ return dilate(erode(b,w,h,kw,kh),w,h,kw,kh); }
+
+// Otsu threshold
+function otsu(g, mask, w, h) {
+  const hist=new Int32Array(256); let n=0;
+  for (let i=0;i<w*h;i++) { if (!mask||mask[i]) { hist[g[i]]++; n++; } }
+  let sum=0; for (let i=0;i<256;i++) sum+=i*hist[i];
+  let best=-1,t=128,sumB=0,wB=0;
+  for (let v=0;v<256;v++) {
+    wB+=hist[v]; if(!wB)continue;
+    const wF=n-wB; if(!wF)break;
+    sumB+=v*hist[v];
+    const mB=sumB/wB,mF=(sum-sumB)/wF,vb=wB*wF*(mB-mF)**2;
+    if(vb>best){best=vb;t=v;}
+  }
+  return t;
+}
+
+// Detect the circular dish — threshold + find largest blob, derive radius from area
+function detectDish(g, w, h) {
+  const bl=gaussBlur(g,w,h,5);
+  const bin=new Uint8Array(w*h);
+  for (let i=0;i<w*h;i++) bin[i]=bl[i]>30?1:0;
+  const {areas,sx,sy}=blobStats(bin,w,h);
+
+  let bestArea=0,bx=w/2,by=h/2;
+  for (const [,area] of areas) if(area>bestArea){bestArea=area;}
+  for (const [lbl,area] of areas) {
+    if(area===bestArea){bx=sx.get(lbl)/area;by=sy.get(lbl)/area;}
+  }
+  const r=Math.min(Math.sqrt(bestArea/Math.PI), Math.min(w,h)*0.48);
+  return {cx:bx,cy:by,r};
+}
+
+function dishMask(w,h,cx,cy,r,inset=8) {
+  const m=new Uint8Array(w*h), ri2=(r-inset)**2;
+  for (let y=0;y<h;y++) for (let x=0;x<w;x++)
+    m[y*w+x]=((x-cx)**2+(y-cy)**2<ri2)?1:0;
+  return m;
+}
+
+function subtractBg(g,w,h,mask,sigma) {
+  const bg=gaussBlur(g,w,h,sigma), out=new Uint8Array(w*h);
+  for (let i=0;i<w*h;i++)
+    if(!mask||mask[i]) out[i]=Math.min(255,Math.max(0,(g[i]-bg[i])+128));
+  return out;
+}
+
+function removeGrid(bin,w,h,r) {
+  const klen=Math.min(120,Math.max(40,Math.round(r*0.06)));
+  const lines=new Uint8Array(w*h);
+  const h2=morphOpen(bin,w,h,klen,1), v2=morphOpen(bin,w,h,1,klen);
+  for (let i=0;i<w*h;i++) lines[i]=h2[i]|v2[i];
+  const dl=dilate(lines,w,h,5,5);
+  const out=new Uint8Array(w*h);
+  for (let i=0;i<w*h;i++) out[i]=bin[i]&(dl[i]?0:1);
+  return out;
+}
+
+// Connected components — returns per-label maps (shared by detectDish + colony finding)
+function blobStats(bin, w, h) {
+  const labels=new Int32Array(w*h), parent=[0]; let next=1;
+  function find(x){while(parent[x]!==x){parent[x]=parent[parent[x]];x=parent[x];}return x;}
+  function union(a,b){a=find(a);b=find(b);if(a!==b)parent[a]=b;return b;}
+
+  for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
+    const i=y*w+x; if(!bin[i])continue;
+    const lL=x>0&&bin[i-1]?find(labels[i-1]):0;
+    const lU=y>0&&bin[i-w]?find(labels[i-w]):0;
+    if(!lL&&!lU){labels[i]=next;parent[next]=next;next++;}
+    else if(lL&&!lU) labels[i]=lL;
+    else if(!lL&&lU) labels[i]=lU;
+    else labels[i]=union(lL,lU);
+  }
+
+  const areas=new Map(),sx=new Map(),sy=new Map(),perim=new Map();
+  for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
+    const i=y*w+x; if(!bin[i])continue;
+    const lb=find(labels[i]); labels[i]=lb;
+    areas.set(lb,(areas.get(lb)||0)+1);
+    sx.set(lb,(sx.get(lb)||0)+x);
+    sy.set(lb,(sy.get(lb)||0)+y);
+    const brd=(x===0||!bin[i-1])||(x===w-1||!bin[i+1])||(y===0||!bin[i-w])||(y===h-1||!bin[i+w]);
+    if(brd) perim.set(lb,(perim.get(lb)||0)+1);
+  }
+  return {areas,sx,sy,perim};
+}
+
+function findColonies(bin,w,h) {
+  const {areas,sx,sy,perim}=blobStats(bin,w,h);
+  const out=[];
+  for (const [lb,area] of areas) {
+    const p=perim.get(lb)||1;
+    out.push({area, circ:(4*Math.PI*area)/(p*p),
+              cx:sx.get(lb)/area, cy:sy.get(lb)/area,
+              r:Math.sqrt(area/Math.PI)});
+  }
+  return out;
+}
+
+function mmPx(mm, dishR) { const rp=(mm/2)*(dishR/45); return Math.PI*rp*rp; }
+
+const SIZE_MM = {tiny:[0.05,0.6], medium:[0.05,2.0], large:[0.8,7.0], mixed:[0.05,7.0]};
+
+// ════════════════════════════════════════════════════════════
+// MAIN RUN
+// ════════════════════════════════════════════════════════════
+function runAnalysis() {
+  if (!loadedImg) { alert('Please load an image first.'); return; }
+  document.getElementById('run-btn').disabled=true;
+  document.getElementById('log').textContent='';
+  setStatus('Running…');
+  setTimeout(_run, 60);   // allow UI to repaint before blocking computation
+}
+
+function _run() {
+  try {
+    const plateType = document.getElementById('plate').value;
+    const sizeKey   = document.getElementById('size').value;
+    const hasGrid   = document.getElementById('grid').checked;
+    const satMm     = parseFloat(document.getElementById('sat').value)||0;
+    const minCirc   = parseFloat(document.getElementById('circ').value)||0.30;
+    let   bgSigmaIn = parseInt(document.getElementById('sigma').value)||0;
+    const toff      = parseInt(document.getElementById('toff').value)||0;
+    const manStr    = document.getElementById('manual').value.trim();
+    const manual    = manStr ? parseInt(manStr) : null;
+
+    const {c,sc,w,h} = resized(loadedImg);
+    log(`Processing at ${w}×${h} px`);
+
+    const imgData = c.getContext('2d').getImageData(0,0,w,h);
+    const gray    = toGray(imgData.data, w*h);
+    log('Grayscale done');
+
+    log('Detecting dish…');
+    const {cx,cy,r} = detectDish(gray,w,h);
+    log(`Dish: centre (${Math.round(cx)},${Math.round(cy)}), radius ${Math.round(r)} px`);
+
+    const mask = dishMask(w,h,cx,cy,r);
+
+    const bgSigma = Math.max(5, bgSigmaIn ||
+      (plateType==='light_agar' ? Math.round(r*0.05) : Math.round(r*0.03)));
+    log(`BG sigma: ${bgSigma}`);
+
+    log('Subtracting background…');
+    const corr = subtractBg(gray,w,h,mask,bgSigma);
+
+    const t = otsu(corr,mask,w,h) + toff;
+    log(`Threshold: ${t}`);
+
+    let bin = new Uint8Array(w*h);
+    for (let i=0;i<w*h;i++) bin[i]=(mask[i]&&corr[i]>t)?1:0;
+
+    if (hasGrid) { log('Removing grid lines…'); bin=removeGrid(bin,w,h,r); }
+
+    log('Finding colonies…');
+    const all = findColonies(bin,w,h);
+    log(`Raw blobs: ${all.length}`);
+
+    const [minMm,maxMm] = SIZE_MM[sizeKey]||SIZE_MM.medium;
+    const minA = Math.max(10, mmPx(minMm,r));
+    const maxA = mmPx(maxMm,r);
+    const minSat = satMm>0 ? mmPx(satMm,r) : 0;
+
+    const colonies = all.filter(b =>
+      b.area>=minA && b.area<=maxA && b.circ>=minCirc && b.area>=minSat);
+
+    log(`Colonies detected: ${colonies.length}`);
+    if (manual!==null) {
+      const acc=(100*Math.min(colonies.length,manual)/Math.max(colonies.length,manual)).toFixed(1);
+      log(`Accuracy vs manual (${manual}): ${acc}%`);
+      document.getElementById('res-acc').textContent = `${acc}% vs manual count of ${manual}`;
+    } else {
+      document.getElementById('res-acc').textContent = '';
+    }
+
+    drawResults(colonies, cx, cy, r, 1/sc, manual);
+    setStatus(`Done — ${colonies.length} colonies detected.`);
+  } catch(e) {
+    log('ERROR: '+e.message); setStatus('Error — '+e.message);
+  }
+  document.getElementById('run-btn').disabled=false;
+}
+
+// ════════════════════════════════════════════════════════════
+// DRAWING
+// ════════════════════════════════════════════════════════════
+let resultDataURL = null;
+
+function drawResults(colonies, cx, cy, r, s, manual) {
+  const rc  = document.getElementById('res-canvas');
+  rc.width  = loadedImg.width;
+  rc.height = loadedImg.height;
+  const ctx = rc.getContext('2d');
+
+  ctx.drawImage(loadedImg, 0, 0);
+
+  // Dish outline
+  ctx.beginPath();
+  ctx.arc(cx*s, cy*s, r*s, 0, 2*Math.PI);
+  ctx.strokeStyle='rgba(255,255,80,0.45)';
+  ctx.lineWidth=2;
+  ctx.stroke();
+
+  // Colony circles
+  ctx.strokeStyle='#00e5ff';
+  ctx.lineWidth=Math.max(1, r*s/180);
+  for (const col of colonies) {
+    ctx.beginPath();
+    ctx.arc(col.cx*s, col.cy*s, Math.max(2, col.r*s), 0, 2*Math.PI);
+    ctx.stroke();
+  }
+
+  // Count label
+  const fs = Math.round(loadedImg.width/22);
+  ctx.font=`bold ${fs}px -apple-system,sans-serif`;
+  ctx.fillStyle='rgba(0,0,0,0.45)';
+  ctx.fillText(colonies.length, 22, fs+22);
+  ctx.fillStyle='#00e5ff';
+  ctx.fillText(colonies.length, 20, fs+20);
+
+  // Show panel
+  document.getElementById('res-count').textContent = `${colonies.length} colonies`;
+  document.getElementById('result-panel').style.display='block';
+  document.getElementById('res-sep').style.display='block';
+
+  resultDataURL = rc.toDataURL('image/png');
+}
+
+function downloadResult() {
+  if (!resultDataURL) return;
+  Object.assign(document.createElement('a'),
+    {href:resultDataURL, download:'colony_result.png'}).click();
+}
+
+// ════════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════════
+setMode('default');
+initAnim();
+</script>
+</body>
+</html>
