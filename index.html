@@ -554,9 +554,18 @@ function dishMask(w,h,cx,cy,r,inset=8) {
 }
 
 function subtractBg(g,w,h,mask,sigma) {
-  const bg=gaussBlur(g,w,h,sigma), out=new Uint8Array(w*h);
-  for (let i=0;i<w*h;i++)
-    if(!mask||mask[i]) out[i]=Math.min(255,Math.max(0,(g[i]-bg[i])+128));
+  const bg=gaussBlur(g,w,h,sigma);
+  // Saturating subtract — matches cv2.subtract (clips negatives to 0)
+  const raw=new Uint8Array(w*h);
+  for (let i=0;i<w*h;i++) raw[i]=Math.max(0,g[i]-bg[i]);
+  // NORM_MINMAX over whole image — matches cv2.normalize(…, NORM_MINMAX)
+  let mn=255,mx=0;
+  for (let i=0;i<w*h;i++){if(raw[i]<mn)mn=raw[i];if(raw[i]>mx)mx=raw[i];}
+  const rng=mx-mn||1;
+  const out=new Uint8Array(w*h);
+  for (let i=0;i<w*h;i++) out[i]=Math.round((raw[i]-mn)*255/rng);
+  // Apply dish mask after normalization — matches cv2.bitwise_and after normalize
+  if(mask) for(let i=0;i<w*h;i++) if(!mask[i]) out[i]=0;
   return out;
 }
 
@@ -579,12 +588,14 @@ function blobStats(bin, w, h) {
 
   for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
     const i=y*w+x; if(!bin[i])continue;
-    const lL=x>0&&bin[i-1]?find(labels[i-1]):0;
-    const lU=y>0&&bin[i-w]?find(labels[i-w]):0;
-    if(!lL&&!lU){labels[i]=next;parent[next]=next;next++;}
-    else if(lL&&!lU) labels[i]=lL;
-    else if(!lL&&lU) labels[i]=lU;
-    else labels[i]=union(lL,lU);
+    // 8-connected: left, upper-left, up, upper-right — matches skimage connectivity=2
+    const lL =x>0        &&bin[i-1]    ?find(labels[i-1])  :0;
+    const lUL=x>0  &&y>0 &&bin[i-w-1] ?find(labels[i-w-1]):0;
+    const lU =       y>0 &&bin[i-w]    ?find(labels[i-w])  :0;
+    const lUR=x<w-1&&y>0 &&bin[i-w+1] ?find(labels[i-w+1]):0;
+    const nbrs=[lL,lUL,lU,lUR].filter(l=>l>0);
+    if(!nbrs.length){labels[i]=next;parent[next]=next;next++;}
+    else{let r=nbrs[0];for(let k=1;k<nbrs.length;k++)r=union(r,nbrs[k]);labels[i]=find(r);}
   }
 
   const areas=new Map(),sx=new Map(),sy=new Map(),perim=new Map();
@@ -681,7 +692,7 @@ function _run() {
 
     log(`Colonies detected: ${colonies.length}`);
     if (manual!==null) {
-      const acc=(100*Math.min(colonies.length,manual)/Math.max(colonies.length,manual)).toFixed(1);
+      const acc=(100*(1-Math.abs(colonies.length-manual)/manual)).toFixed(1);
       log(`Accuracy vs manual (${manual}): ${acc}%`);
       document.getElementById('res-acc').textContent = `${acc}% vs manual count of ${manual}`;
     } else {
