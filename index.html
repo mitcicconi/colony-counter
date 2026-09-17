@@ -181,6 +181,14 @@ const MIN_COLONY_DIAM_FRAC = 0.0028; // re-tuned slightly rather than copied 1:1
 const MAX_COLONY_DIAM_FRAC = 0.05;
 const MAX_DIM = 3600;              // processing resolution cap
 
+// Annotation-only: colonies are numbered in a top-to-bottom "snake" reading
+// order (left-to-right, then right-to-left on the next strip, etc.) so the
+// count is easy to visually retrace. Every 100 form one color band, with
+// the running total labeled at the last colony of each band.
+const COUNT_BAND_SIZE = 100;
+const COUNT_BAND_COLORS = ['#ffadad', '#ffd6a5', '#fdffb6', '#caffbf',
+                            '#9bf6ff', '#a0c4ff', '#bdb2ff', '#ffc6ff'];
+
 /* ═══════════════════════════ UI WIRING ═══════════════════════════ */
 const dz = document.getElementById('drop');
 const fi = document.getElementById('fi');
@@ -629,6 +637,22 @@ function rejectTextClusters(items, typicalArea, clusterRadius, smallFrac, minGro
   return items.filter((_, i) => !reject.has(i));
 }
 
+/* ═══════════════════════════ COUNT-ORDER (for annotation only) ═══════════════════════════
+   Boustrophedon ("snake") ordering: left-to-right along one horizontal
+   strip, then right-to-left along the next, top to bottom overall — so the
+   count-band annotation traces a path a human can actually follow by eye. */
+function orderColoniesSnake(items) {
+  if (!items.length) return items;
+  const diam = 2 * (items.map(p => Math.sqrt(p.area/Math.PI)).sort((a,b)=>a-b)[items.length>>1]);
+  const stripH = Math.max(15, diam*2.5);
+  const minY = Math.min(...items.map(p => p.cy));
+  return items.slice().sort((a, b) => {
+    const sa = Math.floor((a.cy-minY)/stripH), sb = Math.floor((b.cy-minY)/stripH);
+    if (sa !== sb) return sa - sb;
+    return (sa % 2 === 0) ? (a.cx - b.cx) : (b.cx - a.cx);
+  });
+}
+
 /* ═══════════════════════════ MAIN PIPELINE ═══════════════════════════ */
 function runAnalysis() {
   if (!loadedImg) return;
@@ -702,6 +726,7 @@ function _run() {
       const typicalDiam = 2*Math.sqrt(typicalArea/Math.PI);
       colonies = rejectTextClusters(candidates, typicalArea, 1.5*typicalDiam, 0.5, 4);
     }
+    colonies = orderColoniesSnake(colonies);
     log(`Candidates: ${candidates.length}  →  after label/artifact rejection: ${colonies.length}`);
 
     const count = colonies.length;
@@ -734,14 +759,28 @@ function drawResults(colonies, cx, cy, r, s, count, manual, acc) {
   ctx.lineWidth = Math.max(2, r*s/220);
   ctx.stroke();
 
-  ctx.strokeStyle = '#22e06a';
   ctx.lineWidth = Math.max(1.5, r*s/260);
-  for (const p of colonies) {
+  const labelFontSize = Math.max(11, r*s/26);
+  ctx.font = `700 ${labelFontSize}px -apple-system,sans-serif`;
+  ctx.textBaseline = 'middle';
+  colonies.forEach((p, i) => {
     const rad = Math.max(3, Math.sqrt(p.area/Math.PI)*s + 3*s);
+    ctx.strokeStyle = COUNT_BAND_COLORS[Math.floor(i/COUNT_BAND_SIZE) % COUNT_BAND_COLORS.length];
     ctx.beginPath();
     ctx.arc(p.cx*s, p.cy*s, rad, 0, 2*Math.PI);
     ctx.stroke();
-  }
+
+    const n = i + 1;
+    if (n % COUNT_BAND_SIZE === 0) {
+      const tx = p.cx*s + rad + 5, ty = p.cy*s;
+      ctx.lineWidth = Math.max(3, labelFontSize/4);
+      ctx.strokeStyle = 'rgba(0,0,0,0.75)';
+      ctx.strokeText(n, tx, ty);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(n, tx, ty);
+      ctx.lineWidth = Math.max(1.5, r*s/260);
+    }
+  });
 
   document.getElementById('res-count').textContent = `${count} colonies`;
   const accEl = document.getElementById('res-acc');

@@ -49,6 +49,14 @@ MAX_COLONY_DIAM_FRAC = 0.05     # largest single colony before it's treated
 DEFAULT_DISH_DIAMETER_MM = 90.0  # only used for the reported mm/px scale —
                                   # detection itself is resolution/zoom independent.
 
+# Annotation-only: colonies are numbered in a top-to-bottom "snake" reading
+# order (left-to-right, then right-to-left on the next strip, etc.) so a
+# human can visually retrace the count. Every 100 form one color band, with
+# the running total labeled at the last colony of each band.
+COUNT_BAND_SIZE = 100
+COUNT_BAND_COLORS_HEX = ["#ffadad", "#ffd6a5", "#fdffb6", "#caffbf",
+                          "#9bf6ff", "#a0c4ff", "#bdb2ff", "#ffc6ff"]
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dish + agar-boundary detection
@@ -231,24 +239,79 @@ def filter_colonies(labels, agar_r, min_circularity, min_solidity):
     return reject_text_clusters(candidates, typical_area, cluster_radius=1.5 * typical_diam)
 
 
+def order_colonies_snake(colonies):
+    """
+    Order colonies top-to-bottom in a boustrophedon ("snake") path — left to
+    right along one horizontal strip, then right to left along the next —
+    so the count-band annotation traces a path a human can actually follow
+    by eye, rather than jumping around the plate.
+    """
+    if not colonies:
+        return colonies
+
+    diam = 2 * np.median([np.sqrt(p.area / np.pi) for p in colonies])
+    strip_h = max(15.0, diam * 2.5)
+
+    ys = np.array([p.centroid[0] for p in colonies])
+    min_y = ys.min()
+    strip_idx = np.floor((ys - min_y) / strip_h).astype(int)
+
+    order = sorted(
+        range(len(colonies)),
+        key=lambda i: (strip_idx[i],
+                        colonies[i].centroid[1] * (1 if strip_idx[i] % 2 == 0 else -1)),
+    )
+    return [colonies[i] for i in order]
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Visualisation
 # ─────────────────────────────────────────────────────────────────────────────
 
+def _hex_to_bgr(hex_color):
+    h = hex_color.lstrip('#')
+    r, g, b = int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16)
+    return (b, g, r)
+
+
+COUNT_BAND_COLORS_BGR = [_hex_to_bgr(c) for c in COUNT_BAND_COLORS_HEX]
+
+
 def annotate_image(img, colonies, cx, cy, agar_r, count, manual_count):
+    """Colonies are drawn in COUNT_BAND_SIZE-sized color bands, in snake
+    reading order, with the running total labeled every COUNT_BAND_SIZE-th
+    colony — purely to make the count easy to spot-check visually. Doesn't
+    affect detection/counting itself. Expects `colonies` already in the
+    order it should be numbered in (see order_colonies_snake)."""
     vis = img.copy()
     cv2.circle(vis, (int(cx), int(cy)), int(agar_r), (0, 220, 255), max(2, img.shape[1] // 750))
-    for p in colonies:
+
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    label_scale = max(0.6, img.shape[1] / 2600)
+    label_thickness = max(1, int(label_scale * 2.2))
+    circle_thickness = max(2, img.shape[1] // 1000)
+
+    for i, p in enumerate(colonies):
         ry, rx = p.centroid
         col_r = max(int(np.sqrt(p.area / np.pi)) + 3, 5)
-        cv2.circle(vis, (int(rx), int(ry)), col_r, (0, 255, 80), max(2, img.shape[1] // 1000))
+        color = COUNT_BAND_COLORS_BGR[(i // COUNT_BAND_SIZE) % len(COUNT_BAND_COLORS_BGR)]
+        cv2.circle(vis, (int(rx), int(ry)), col_r, color, circle_thickness)
+
+        n = i + 1
+        if n % COUNT_BAND_SIZE == 0:
+            text = str(n)
+            (tw, th), _ = cv2.getTextSize(text, font, label_scale, label_thickness)
+            tx, ty = int(rx) + col_r + 6, int(ry) + th // 2
+            cv2.putText(vis, text, (tx, ty), font, label_scale, (0, 0, 0),
+                        label_thickness + 2, cv2.LINE_AA)
+            cv2.putText(vis, text, (tx, ty), font, label_scale, (255, 255, 255),
+                        label_thickness, cv2.LINE_AA)
 
     label = f"Detected: {count}"
     if manual_count is not None:
         acc = 100.0 * (1.0 - abs(count - manual_count) / manual_count)
         label += f"   |   Manual: {manual_count}   |   Accuracy: {acc:.1f}%"
 
-    font = cv2.FONT_HERSHEY_SIMPLEX
     scale_f = max(1.0, img.shape[1] / 1400)
     thickness = max(2, int(scale_f * 2))
     (tw, th), baseline = cv2.getTextSize(label, font, scale_f, thickness)
@@ -289,7 +352,7 @@ def count_colonies(
     mask = dish_mask(gray.shape, cx, cy, agar_r)
 
     labels, binary = segment_colonies(gray, mask, agar_r, threshold_offset)
-    colonies = filter_colonies(labels, agar_r, min_circularity, min_solidity)
+    colonies = order_colonies_snake(filter_colonies(labels, agar_r, min_circularity, min_solidity))
     count = len(colonies)
 
     mm_per_px = dish_diameter_mm / (2 * agar_r)
