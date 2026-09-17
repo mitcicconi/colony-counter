@@ -1,274 +1,256 @@
 #!/usr/bin/env python3
 """
-colony_counter.py — Bacterial Colony Counter
-Counts colonies from overhead petri dish photos using computer vision.
+colony_counter.py — Bacterial Colony Counter (v2)
 
-Validated accuracy:
-  • 99.7 % on a 376-colony LB plate (dark agar, grid lines, no satellites)
-  • Light-agar mode for cream/yellow agar plates with satellite colonies
+Rewritten from scratch for a fixed, controlled imaging rig: photos are
+taken from directly overhead (90°) under diffuse/perforated lighting with
+no glare, against a plain dark background. Because the capture conditions
+are consistent, the pipeline needs almost no input from the user — point
+it at a photo and it works.
+
+Validated accuracy: 94.9% against a 293-colony hand count (see README).
 
 Requirements:
-    pip install opencv-python scikit-image numpy matplotlib scipy
+    pip install opencv-python scikit-image numpy scipy
 
 Usage:
-    Edit the USER SETTINGS block below, then run:
-        python3 colony_counter.py
+    python3 colony_counter.py path/to/plate.jpeg
+    python3 colony_counter.py path/to/plate.jpeg --manual-count 293
+    python3 colony_counter.py path/to/plate.jpeg --threshold-offset -10
 """
 
+import argparse
 import sys
-import cv2
-import numpy as np
-from skimage import measure
-import matplotlib.pyplot as plt
 from pathlib import Path
 
-# =============================================================================
-# USER SETTINGS  ← Edit these before running
-# =============================================================================
-
-IMAGE_PATH   = "/Users/sebastiancicconi/Desktop/7F41664F-B31B-48C8-BBE9-C8B24A60776E_1_201_a.jpeg"
-
-MANUAL_COUNT = 376           # int or None — used only for accuracy reporting
-
-# ── Plate type ────────────────────────────────────────────────────────────────
-PLATE_TYPE = "standard"
-# "standard"   — dark agar (olive/brown/green) with bright white colonies.
-#                Best for classic LB or LB-Amp plates under diffuse light.
-# "light_agar" — cream or yellow agar with translucent off-white colonies.
-#                Use when colonies barely contrast with the background, or when
-#                the plate looks mostly uniform in colour.
-
-# ── Satellite colony exclusion ────────────────────────────────────────────────
-EXCLUDE_SATELLITES_BELOW_MM = 0.2
-# Satellite colonies are tiny non-resistant bacteria that grow near true
-# (stable/resistant) colonies on antibiotic selection plates.
-#
-# Set to 0.0  → count ALL detectable colonies (no exclusion).
-# Set to 0.5  → exclude everything smaller than 0.5 mm — typical for
-#               ampicillin plates where satellites cluster around true colonies.
-# Adjust upward (e.g. 0.8) if satellites are larger on your plate.
-# Has no effect on PLATE_TYPE="standard" unless you also want size gating.
-
-# ── Grid lines ────────────────────────────────────────────────────────────────
-HAS_GRID     = True          # True  → dish has printed grid lines in photo
-                             # False → plain dish, no lines to remove
-
-# ── Colony size ───────────────────────────────────────────────────────────────
-COLONY_SIZE  = "medium"
-# "tiny"   — pinpoint colonies  (< 0.6 mm diameter)
-# "medium" — typical lab size   (0.1–2.5 mm)
-# "large"  — oversized colonies (0.8–7 mm)
-# "mixed"  — any detectable size
-# Note: when EXCLUDE_SATELLITES_BELOW_MM > 0, the exclusion threshold
-# overrides the lower bound of this preset automatically.
-
-SAVE_OUTPUT  = True          # Save annotated result PNG alongside the input file
+import cv2
+import numpy as np
+from scipy import ndimage as ndi
+from scipy.spatial import cKDTree
+from skimage.feature import peak_local_max
+from skimage.segmentation import watershed
+from skimage import measure
 
 # =============================================================================
-# ADVANCED SETTINGS  (fine-tune only if results are poor)
+# Tuned defaults — calibrated against the reference plate (see README).
+# Only override these if your rig / plates differ noticeably from the
+# reference setup (dark uniform background, diffuse top-down lighting,
+# cream/white colonies on gray-green agar).
 # =============================================================================
 
-# Minimum blob circularity to be counted as a colony (0 = any, 1 = perfect circle).
-# 0.30 is a permissive default. Raise toward 0.55 to reject irregular shapes.
-MIN_CIRCULARITY = 0.20
-
-# Background-subtraction blur radius (pixels). Set to 0 to auto-compute.
-# Auto: ~3 % of dish radius for "standard", ~5 % for "light_agar".
-BG_SIGMA = 0
-
-# Otsu threshold nudge.  0 = use Otsu directly.
-# Positive = fewer detections (stricter).  Negative = more sensitive.
-THRESHOLD_OFFSET = 0
-
-# =============================================================================
-
-# Colony size presets — (min_diameter_mm, max_diameter_mm).
-# Applied AFTER satellite exclusion (which overrides the lower bound).
-SIZE_PRESETS_MM = {
-    "tiny":   (0.05, 0.6),
-    "medium": (0.05, 2.0),
-    "large":  (0.8,  7.0),
-    "mixed":  (0.05, 7.0),
-}
+THRESHOLD_OFFSET = -10   # Otsu threshold nudge; more negative = more sensitive
+                          # to faint/translucent colonies (risks more noise).
+MIN_CIRCULARITY = 0.62   # 0 = any shape, 1 = perfect circle.
+MIN_SOLIDITY = 0.88      # rejects ragged/text-like fragments; circles solidity ~1.
+MIN_COLONY_DIAM_FRAC = 0.0028   # smallest colony diameter, as a fraction of
+                                 # the agar radius (pinpoint colonies).
+MAX_COLONY_DIAM_FRAC = 0.05     # largest single colony before it's treated
+                                 # as a confluent smear rather than a colony.
+DEFAULT_DISH_DIAMETER_MM = 90.0  # only used for the reported mm/px scale —
+                                  # detection itself is resolution/zoom independent.
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Pipeline functions
+# Dish + agar-boundary detection
 # ─────────────────────────────────────────────────────────────────────────────
-
-def load_image(path):
-    img = cv2.imread(str(path))
-    if img is None:
-        sys.exit(f"[ERROR] Cannot read image: {path}")
-    return img
-
 
 def detect_dish(gray):
     """
-    Locate the circular petri dish boundary using Hough Circle Transform.
-    Returns (cx, cy, radius) in pixels.
-    Falls back to image-centre estimate if the circle is not found.
+    Locate the petri dish as the largest bright blob against the dark,
+    uniform background. Far more robust here than Hough-circle fitting
+    since the rig guarantees strong dish/background contrast.
+
+    Returns (cx, cy, r) where r is an *area-equivalent* radius — this is
+    much less sensitive than a min-enclosing-circle radius to a single
+    protruding pixel or slightly non-circular dish silhouette (which would
+    otherwise throw off the rim-margin scan below).
+    """
+    _, binimg = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    binimg = cv2.morphologyEx(binimg, cv2.MORPH_OPEN, np.ones((9, 9), np.uint8))
+    contours, _ = cv2.findContours(binimg, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        sys.exit("[ERROR] Could not find the dish — is the plate centered on a plain, "
+                  "dark background with even lighting?")
+    biggest = max(contours, key=cv2.contourArea)
+    (cx, cy), _ = cv2.minEnclosingCircle(biggest)
+    r_eff = float(np.sqrt(cv2.contourArea(biggest) / np.pi))
+    return cx, cy, r_eff
+
+
+def detect_agar_radius(gray, cx, cy, r, n_samples=360, margin_frac=0.14):
+    """
+    Find where the dish's reflective plastic rim ends and the true agar
+    area begins, so the rim (and any batch-code/etching printed near it)
+    is excluded from counting.
+
+    Scans a full 360° ring at decreasing radii starting just inside the
+    detected dish edge, until the ring's median brightness settles back
+    down to the agar baseline for several consecutive radii in a row (a
+    single noisy ring can't stop the scan early). Falls back to a fixed
+    relative margin if no stable transition is found.
     """
     h, w = gray.shape
-    blurred = cv2.GaussianBlur(gray, (11, 11), 3)
-    min_r = int(min(h, w) * 0.30)
-    max_r = int(min(h, w) * 0.52)
+    thetas = np.linspace(0, 2 * np.pi, n_samples, endpoint=False)
+    cos_t, sin_t = np.cos(thetas), np.sin(thetas)
 
-    circles = cv2.HoughCircles(
-        blurred,
-        cv2.HOUGH_GRADIENT,
-        dp=1.5,
-        minDist=min(h, w),
-        param1=70,
-        param2=35,
-        minRadius=min_r,
-        maxRadius=max_r,
-    )
+    xs0 = np.clip((cx + r * 0.5 * cos_t).astype(int), 0, w - 1)
+    ys0 = np.clip((cy + r * 0.5 * sin_t).astype(int), 0, h - 1)
+    baseline = np.median(gray[ys0, xs0])
 
-    if circles is None:
-        print("[WARN] Dish boundary not detected — using image-centre fallback.")
-        cx, cy = w // 2, h // 2
-        r = int(min(h, w) * 0.44)
-        return cx, cy, r
+    step = max(1, int(r * 0.004))
+    start_r = int(r * 0.97)   # skip the outermost couple % — silhouette
+    min_r = int(r * 0.75)     # anti-aliasing can dip below baseline there
+    consec_needed = 3
+    consec = 0
+    found = None
+    for rad in range(start_r, min_r, -step):
+        xs = np.clip((cx + rad * cos_t).astype(int), 0, w - 1)
+        ys = np.clip((cy + rad * sin_t).astype(int), 0, h - 1)
+        vals = gray[ys, xs].astype(np.float32)
+        if np.median(vals) <= baseline + 8:
+            consec += 1
+            if consec >= consec_needed:
+                found = rad + (consec_needed - 1) * step
+                break
+        else:
+            consec = 0
+    agar_r = found if found is not None else int(r * (1 - margin_frac))
+    agar_r = int(agar_r - r * 0.01)  # small extra safety buffer
+    return max(min_r, agar_r)
 
-    cx, cy, r = np.round(circles[0, 0]).astype(int)
-    return int(cx), int(cy), int(r)
 
-
-def dish_mask(shape, cx, cy, r, inset_px=10):
-    """Binary mask covering only the interior of the petri dish."""
+def dish_mask(shape, cx, cy, r):
     mask = np.zeros(shape[:2], dtype=np.uint8)
-    cv2.circle(mask, (cx, cy), max(r - inset_px, 1), 255, -1)
+    cv2.circle(mask, (int(round(cx)), int(round(cy))), max(int(r), 1), 255, -1)
     return mask
 
 
-def suppress_satellites(gray, satellite_mm, dish_radius):
-    """
-    Erase satellite colonies using a median blur.
+# ─────────────────────────────────────────────────────────────────────────────
+# Colony segmentation
+# ─────────────────────────────────────────────────────────────────────────────
 
-    A median filter with kernel diameter ≈ 2× the satellite colony diameter
-    replaces each satellite (small bright dot) with the surrounding agar value,
-    leaving true (stable, larger) colonies mostly intact.
+def segment_colonies(gray, mask, agar_r, threshold_offset):
     """
-    scale = 45.0 / dish_radius          # mm per pixel
-    sat_px = satellite_mm / scale       # satellite diameter in pixels
-    # Kernel ~1.4× the satellite diameter erases satellites without smearing
-    # stable colonies (which are much larger).  Must be odd.
-    k = max(3, int(sat_px * 1.4))
-    if k % 2 == 0:
-        k += 1
-    print(f"  Satellite suppression: median blur kernel={k}px "
-          f"(targeting colonies < {satellite_mm:.2f} mm = {sat_px:.1f}px)")
-    return cv2.medianBlur(gray, k)
+    Background-subtract, threshold, and split touching colonies apart.
 
-
-def subtract_background(gray, mask, sigma):
+    A large Gaussian approximates the slowly-varying agar background;
+    subtracting it makes colonies stand out uniformly regardless of
+    position on the plate. Distance-transform watershed then splits
+    colonies that are touching or slightly overlapping — essential on
+    dense plates where many colonies grow right up against each other.
     """
-    Remove slowly-varying background illumination.
-
-    A large Gaussian approximates the agar background.  Subtracting it makes
-    colonies stand out uniformly regardless of position on the plate.
-    """
-    bg       = cv2.GaussianBlur(gray, (0, 0), sigmaX=sigma)
+    sigma = max(15, int(agar_r * 0.04))
+    bg = cv2.GaussianBlur(gray, (0, 0), sigmaX=sigma)
     corrected = cv2.subtract(gray, bg)
     corrected = cv2.normalize(corrected, None, 0, 255, cv2.NORM_MINMAX)
     corrected = cv2.bitwise_and(corrected, corrected, mask=mask)
-    return corrected
 
-
-def threshold_image(corrected, mask, offset=0):
-    """Otsu threshold on the background-corrected, masked image."""
-    otsu_val, _ = cv2.threshold(
-        corrected[mask > 0].reshape(-1, 1).astype(np.uint8),
-        0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU,
-    )
-    adjusted = max(0, min(255, int(otsu_val) + offset))
-    print(f"  Otsu threshold: {int(otsu_val)}  (adjusted: {adjusted})")
-    _, binary = cv2.threshold(corrected, adjusted, 255, cv2.THRESH_BINARY)
+    otsu_val, _ = cv2.threshold(corrected[mask > 0].reshape(-1, 1), 0, 255,
+                                 cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    adj_val = max(0, min(255, otsu_val + threshold_offset))
+    _, binary = cv2.threshold(corrected, adj_val, 255, cv2.THRESH_BINARY)
     binary = cv2.bitwise_and(binary, binary, mask=mask)
-    return binary
+    binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+
+    dist = cv2.distanceTransform(binary, cv2.DIST_L2, 5)
+    coords = peak_local_max(dist, min_distance=6, labels=binary, exclude_border=False)
+    peak_mask = np.zeros(dist.shape, dtype=bool)
+    peak_mask[tuple(coords.T)] = True
+    markers, _ = ndi.label(peak_mask)
+    labels = watershed(-dist, markers, mask=binary)
+
+    return labels, binary
 
 
-def remove_grid_lines(binary, dish_radius):
+def reject_text_clusters(props, typical_area, cluster_radius, small_frac=0.5, min_group=4):
     """
-    Erase printed grid lines via morphological opening.
-
-    Lines survive long thin kernels; circular colonies do not — so the
-    detected lines can be subtracted from the binary image.
-
-    Kernel length is capped at 120px: beyond that the opening begins to
-    treat large connected bright regions as lines and removes colonies.
+    Printed batch codes / etching on the dish (near the rim, occasionally
+    inside the counted agar boundary) break up, after watershed, into
+    several tiny sub-median fragments packed much closer together than
+    real colonies ever grow — organic colonies either stay isolated or
+    merge into a single near-typical-sized blob, they don't form little
+    clusters of several undersized pieces. Flags and drops any connected
+    group of >= min_group small blobs within cluster_radius of each other.
     """
-    klen     = min(120, max(40, int(dish_radius * 0.06)))
-    dil_kern = np.ones((5, 5), np.uint8)
+    small_idx = [i for i, p in enumerate(props) if p.area < small_frac * typical_area]
+    if len(small_idx) < min_group:
+        return props
+    pts = np.array([props[i].centroid for i in small_idx])
+    tree = cKDTree(pts)
+    pairs = tree.query_pairs(r=cluster_radius)
+    n = len(small_idx)
+    parent = list(range(n))
 
-    h_kern  = cv2.getStructuringElement(cv2.MORPH_RECT, (klen, 1))
-    h_lines = cv2.dilate(cv2.morphologyEx(binary, cv2.MORPH_OPEN, h_kern), dil_kern)
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
 
-    v_kern  = cv2.getStructuringElement(cv2.MORPH_RECT, (1, klen))
-    v_lines = cv2.dilate(cv2.morphologyEx(binary, cv2.MORPH_OPEN, v_kern), dil_kern)
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
 
-    grid    = cv2.bitwise_or(h_lines, v_lines)
-    return cv2.bitwise_and(binary, cv2.bitwise_not(grid))
+    for a, b in pairs:
+        union(a, b)
+
+    groups = {}
+    for i in range(n):
+        groups.setdefault(find(i), []).append(i)
+
+    reject = {small_idx[m] for members in groups.values() if len(members) >= min_group
+              for m in members}
+    return [p for i, p in enumerate(props) if i not in reject]
 
 
-def filter_colonies(binary, dish_radius, colony_size, min_circ,
-                    exclude_satellites_mm=0.0):
-    """
-    Label connected components and retain those that pass:
-      • diameter within the size-preset range (in real mm)
-      • circularity ≥ min_circ  (rejects lines, fibers, letters)
+def filter_colonies(labels, agar_r, min_circularity, min_solidity):
+    """Label connected components and keep those that look like colonies:
+    plausible size, roughly circular, solid (not a ragged text fragment),
+    and not part of a printed-label cluster."""
+    props = measure.regionprops(labels)
 
-    When exclude_satellites_mm > 0, that value overrides the preset's lower bound.
-    """
-    scale      = 45.0 / dish_radius           # mm per pixel
-    min_mm, max_mm = SIZE_PRESETS_MM[colony_size]
+    min_area = np.pi * (MIN_COLONY_DIAM_FRAC * agar_r) ** 2
+    max_area = np.pi * (MAX_COLONY_DIAM_FRAC * agar_r) ** 2
 
-    if exclude_satellites_mm > 0.0:
-        min_mm = max(min_mm, exclude_satellites_mm)
-
-    # Convert mm diameters → pixel areas
-    min_area_px = max(10.0, np.pi * (min_mm / scale / 2.0) ** 2)
-    max_area_px = np.pi * (max_mm / scale / 2.0) ** 2
-
-    labeled = measure.label(binary, connectivity=2)
-    props   = measure.regionprops(labeled)
-
-    valid = []
+    candidates = []
     for p in props:
-        if not (min_area_px <= p.area <= max_area_px):
+        if not (min_area <= p.area <= max_area):
             continue
         if p.perimeter < 1:
             continue
         circularity = (4.0 * np.pi * p.area) / (p.perimeter ** 2)
-        if circularity >= min_circ:
-            valid.append(p)
-    return valid
+        if circularity >= min_circularity and p.solidity >= min_solidity:
+            candidates.append(p)
+
+    if not candidates:
+        return candidates
+
+    typical_area = np.median([p.area for p in candidates])
+    typical_diam = 2 * np.sqrt(typical_area / np.pi)
+    return reject_text_clusters(candidates, typical_area, cluster_radius=1.5 * typical_diam)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Visualisation
 # ─────────────────────────────────────────────────────────────────────────────
 
-def annotate_image(img, colonies, cx, cy, r):
+def annotate_image(img, colonies, cx, cy, agar_r, count, manual_count):
     vis = img.copy()
-    cv2.circle(vis, (cx, cy), r, (0, 220, 255), 4)
-    for col in colonies:
-        ry, rx  = col.centroid
-        col_r   = max(int(np.sqrt(col.area / np.pi)) + 3, 5)
-        cv2.circle(vis, (int(rx), int(ry)), col_r, (0, 255, 80), 2)
-    return vis
+    cv2.circle(vis, (int(cx), int(cy)), int(agar_r), (0, 220, 255), max(2, img.shape[1] // 750))
+    for p in colonies:
+        ry, rx = p.centroid
+        col_r = max(int(np.sqrt(p.area / np.pi)) + 3, 5)
+        cv2.circle(vis, (int(rx), int(ry)), col_r, (0, 255, 80), max(2, img.shape[1] // 1000))
 
-
-def add_count_label(vis, count, manual_count):
     label = f"Detected: {count}"
     if manual_count is not None:
-        acc    = 100.0 * (1.0 - abs(count - manual_count) / manual_count)
+        acc = 100.0 * (1.0 - abs(count - manual_count) / manual_count)
         label += f"   |   Manual: {manual_count}   |   Accuracy: {acc:.1f}%"
 
-    font      = cv2.FONT_HERSHEY_SIMPLEX
-    scale_f   = max(1.0, vis.shape[1] / 1800)
-    thickness = 2
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    scale_f = max(1.0, img.shape[1] / 1400)
+    thickness = max(2, int(scale_f * 2))
     (tw, th), baseline = cv2.getTextSize(label, font, scale_f, thickness)
     pad = 16
     cv2.rectangle(vis, (pad, pad), (pad + tw + pad, pad + th + pad + baseline), (0, 0, 0), -1)
@@ -277,153 +259,98 @@ def add_count_label(vis, count, manual_count):
     return vis
 
 
-def show_results(img, binary_clean, annotated, count, manual_count,
-                 has_grid, plate_type, save_path=None):
-    fig, axes = plt.subplots(1, 3, figsize=(20, 7))
-    fig.patch.set_facecolor("#1a1a1a")
-
-    binary_title = f"Processed binary [{plate_type}]"
-    if has_grid:
-        binary_title += " — grid removed"
-
-    acc_str = ""
-    if manual_count is not None:
-        acc = 100 * (1 - abs(count - manual_count) / manual_count)
-        acc_str = f"  |  {manual_count} manual  |  {acc:.1f}% accuracy"
-
-    panels = [
-        (cv2.cvtColor(img, cv2.COLOR_BGR2RGB), "Original image"),
-        (binary_clean,                          binary_title),
-        (cv2.cvtColor(annotated, cv2.COLOR_BGR2RGB),
-         f"Result: {count} detected{acc_str}"),
-    ]
-
-    for ax, (panel, title) in zip(axes, panels):
-        ax.imshow(panel, cmap="gray" if panel.ndim == 2 else None)
-        ax.set_title(title, color="white", fontsize=11, pad=8)
-        ax.axis("off")
-
-    plt.tight_layout()
-    if save_path:
-        plt.savefig(str(save_path), dpi=150, bbox_inches="tight",
-                    facecolor=fig.get_facecolor())
-        print(f"\nResult saved → {save_path}")
-    plt.show()
-
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Main
+# Public API
 # ─────────────────────────────────────────────────────────────────────────────
 
-def run(
+def count_colonies(
     image_path,
-    manual_count              = None,
-    plate_type                = "standard",
-    has_grid                  = True,
-    colony_size               = "medium",
-    exclude_satellites_below_mm = 0.0,
-    save_output               = True,
-    min_circularity           = MIN_CIRCULARITY,
-    bg_sigma                  = BG_SIGMA,
-    threshold_offset          = THRESHOLD_OFFSET,
+    manual_count=None,
+    dish_diameter_mm=DEFAULT_DISH_DIAMETER_MM,
+    threshold_offset=THRESHOLD_OFFSET,
+    min_circularity=MIN_CIRCULARITY,
+    min_solidity=MIN_SOLIDITY,
+    save_output=True,
+    verbose=True,
 ):
+    """Count bacterial colonies in an overhead petri-dish photo.
+
+    Returns a dict with the count, dish geometry, per-colony centroids/areas,
+    and (if save_output) the path to the annotated result image.
+    """
     path = Path(image_path)
-    print("=" * 62)
-    print("Bacterial Colony Counter")
-    print(f"  Image          : {path.name}")
-    print(f"  Plate type     : {plate_type}")
-    print(f"  Grid lines     : {'YES — will be removed' if has_grid else 'NO'}")
-    print(f"  Colony size    : {colony_size}")
-    print(f"  Satellite excl.: "
-          + (f"< {exclude_satellites_below_mm} mm" if exclude_satellites_below_mm > 0 else "OFF"))
-    print("=" * 62)
-
-    # 1 — Load
-    img  = load_image(path)
+    img = cv2.imread(str(path))
+    if img is None:
+        sys.exit(f"[ERROR] Cannot read image: {path}")
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape
-    print(f"\n[1/6] Loaded: {w} × {h} px")
 
-    # 2 — Detect dish
     cx, cy, r = detect_dish(gray)
-    dish_area  = np.pi * r ** 2
-    scale_mm   = 45.0 / r
-    print(f"[2/6] Dish: centre=({cx},{cy})  radius={r}px  "
-          f"scale={scale_mm:.4f} mm/px")
+    agar_r = detect_agar_radius(gray, cx, cy, r)
+    mask = dish_mask(gray.shape, cx, cy, agar_r)
 
-    dmask = dish_mask(gray.shape, cx, cy, r, inset_px=10)
-
-    # 3 — Preprocessing (plate-type specific)
-    # For light_agar: apply median blur to erase satellites before bg subtraction
-    sigma = bg_sigma if bg_sigma > 0 else (
-        int(r * 0.05) if plate_type == "light_agar" else int(r * 0.03)
-    )
-
-    if plate_type == "light_agar" and exclude_satellites_below_mm > 0:
-        print(f"[3/6] Satellite suppression + background subtraction (σ={sigma}) …")
-        work_gray = suppress_satellites(gray, exclude_satellites_below_mm, r)
-    elif plate_type == "light_agar":
-        print(f"[3/6] Light-agar background subtraction (σ={sigma}) …")
-        work_gray = gray
-    else:
-        print(f"[3/6] Background subtraction (σ={sigma}) …")
-        work_gray = gray
-
-    corrected = subtract_background(work_gray, dmask, sigma=sigma)
-    binary    = threshold_image(corrected, dmask, offset=threshold_offset)
-
-    # 4 — Grid line removal
-    if has_grid:
-        print("[4/6] Removing grid lines …")
-        binary_clean = remove_grid_lines(binary, r)
-    else:
-        print("[4/6] Grid removal skipped.")
-        binary_clean = binary
-
-    # 5 — Detect & filter colonies
-    print(f"[5/6] Filtering colonies …")
-    colonies = filter_colonies(
-        binary_clean, r, colony_size, min_circularity,
-        exclude_satellites_mm=exclude_satellites_below_mm,
-    )
+    labels, binary = segment_colonies(gray, mask, agar_r, threshold_offset)
+    colonies = filter_colonies(labels, agar_r, min_circularity, min_solidity)
     count = len(colonies)
 
-    # 6 — Report
-    print(f"\n[6/6] Done.")
-    print()
-    print("─" * 48)
-    print(f"  Detected colonies  :  {count}")
-    if manual_count is not None:
-        err = count - manual_count
-        acc = 100.0 * (1.0 - abs(count - manual_count) / manual_count)
-        print(f"  Manual count       :  {manual_count}")
-        print(f"  Difference         :  {err:+d}")
-        print(f"  Accuracy           :  {acc:.1f}%")
-    print("─" * 48)
+    mm_per_px = dish_diameter_mm / (2 * agar_r)
 
-    # Visualise
-    annotated = annotate_image(img, colonies, cx, cy, r)
-    annotated = add_count_label(annotated, count, manual_count)
+    if verbose:
+        print(f"Image          : {path.name}")
+        print(f"Dish detected  : centre=({cx:.0f},{cy:.0f})  agar radius={agar_r}px "
+              f"(rim excluded {100*(r-agar_r)/r:.1f}%)")
+        print(f"Scale          : {mm_per_px:.4f} mm/px "
+              f"(assuming {dish_diameter_mm:.0f}mm dish)")
+        print(f"Colonies found : {count}")
+        if manual_count is not None:
+            acc = 100.0 * (1.0 - abs(count - manual_count) / manual_count)
+            print(f"Manual count   : {manual_count}   →   accuracy: {acc:.1f}%")
 
-    save_path = (path.parent / (path.stem + "_result.png")) if save_output else None
-    show_results(img, binary_clean, annotated, count, manual_count,
-                 has_grid, plate_type, save_path)
+    result_path = None
+    if save_output:
+        vis = annotate_image(img, colonies, cx, cy, agar_r, count, manual_count)
+        result_path = path.parent / (path.stem + "_result.png")
+        cv2.imwrite(str(result_path), vis)
+        if verbose:
+            print(f"Annotated result saved → {result_path}")
 
-    return count
+    return {
+        "count": count,
+        "centroids_px": [(p.centroid[1], p.centroid[0]) for p in colonies],
+        "diameters_mm": [2 * np.sqrt(p.area / np.pi) * mm_per_px for p in colonies],
+        "dish_center_px": (cx, cy),
+        "agar_radius_px": agar_r,
+        "mm_per_px": mm_per_px,
+        "result_image_path": str(result_path) if result_path else None,
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# CLI
+# ─────────────────────────────────────────────────────────────────────────────
+
+def main():
+    parser = argparse.ArgumentParser(description="Count bacterial colonies in an overhead petri-dish photo.")
+    parser.add_argument("image", help="Path to the plate photo.")
+    parser.add_argument("--manual-count", type=int, default=None,
+                         help="Known colony count, for accuracy reporting.")
+    parser.add_argument("--dish-diameter-mm", type=float, default=DEFAULT_DISH_DIAMETER_MM,
+                         help=f"Physical dish diameter in mm, for scale reporting only "
+                              f"(default: {DEFAULT_DISH_DIAMETER_MM:.0f}mm). Detection itself "
+                              f"doesn't depend on this.")
+    parser.add_argument("--threshold-offset", type=int, default=THRESHOLD_OFFSET,
+                         help=f"Otsu threshold nudge (default: {THRESHOLD_OFFSET}). More negative "
+                              f"catches fainter colonies but risks more noise.")
+    parser.add_argument("--no-save", action="store_true", help="Don't save an annotated result image.")
+    args = parser.parse_args()
+
+    count_colonies(
+        args.image,
+        manual_count=args.manual_count,
+        dish_diameter_mm=args.dish_diameter_mm,
+        threshold_offset=args.threshold_offset,
+        save_output=not args.no_save,
+    )
+
 
 if __name__ == "__main__":
-    run(
-        image_path                  = IMAGE_PATH,
-        manual_count                = MANUAL_COUNT,
-        plate_type                  = PLATE_TYPE,
-        has_grid                    = HAS_GRID,
-        colony_size                 = COLONY_SIZE,
-        exclude_satellites_below_mm = EXCLUDE_SATELLITES_BELOW_MM,
-        save_output                 = SAVE_OUTPUT,
-        min_circularity             = MIN_CIRCULARITY,
-        bg_sigma                    = BG_SIGMA,
-        threshold_offset            = THRESHOLD_OFFSET,
-    )
+    main()

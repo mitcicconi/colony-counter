@@ -3,376 +3,193 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Bacterial Colony Counter</title>
+<title>Colony Counter</title>
 <style>
 *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
 
-/* ── CSS custom properties (updated by JS on theme switch) ── */
 :root{
-  --bg:#464f61;--fg:#f1f5f9;--hint:#c0cad8;
-  --entry-bg:#3d4655;--entry-fg:#f1f5f9;
-  --sep:#68778a;--btn-bg:#68778a;--btn-fg:#f1f5f9;--btn-act:#78889a;
-  --run-bg:#60a5fa;--run-fg:#1e3a5f;--run-act:#3b82f6;
-  --title-fg:#93c5fd;--log-bg:#3d4655;--log-fg:#c0cad8;
-  --canvas-bg:#555f71;--tog-track:#3a4352;
-  --tog-sel:#60a5fa;--tog-sel-fg:#1e3a5f;--tog-fg:#8896ab;
-  --tx:background .25s,color .25s,border-color .25s,fill .25s;
+  --bg:#f7f8fa;--panel:#ffffff;--fg:#1c2230;--hint:#66707e;
+  --border:#e1e5eb;--entry-bg:#f1f3f6;
+  --accent:#2563eb;--accent-fg:#ffffff;--accent-hover:#1d4ed8;
+  --btn-bg:#eef1f5;--btn-fg:#374151;--btn-hover:#e2e7ee;
+  --log-bg:#0f1420;--log-fg:#c7d0dd;
+  --good:#16a34a;--warn:#d97706;
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --bg:#14171d;--panel:#1b1f27;--fg:#e7ebf1;--hint:#8b96a5;
+    --border:#2a2f3a;--entry-bg:#232833;
+    --accent:#5b8dee;--accent-fg:#0b1220;--accent-hover:#4676d8;
+    --btn-bg:#232833;--btn-fg:#dbe1ea;--btn-hover:#2b3140;
+    --log-bg:#0a0d13;--log-fg:#aab4c2;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#14171d;--panel:#1b1f27;--fg:#e7ebf1;--hint:#8b96a5;
+  --border:#2a2f3a;--entry-bg:#232833;
+  --accent:#5b8dee;--accent-fg:#0b1220;--accent-hover:#4676d8;
+  --btn-bg:#232833;--btn-fg:#dbe1ea;--btn-hover:#2b3140;
+  --log-bg:#0a0d13;--log-fg:#aab4c2;
 }
 
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-     background:var(--bg);color:var(--fg);min-height:100vh;transition:var(--tx)}
+     background:var(--bg);color:var(--fg);min-height:100vh}
 
-/* ── Layout ── */
-#app{display:flex;flex-direction:column;min-height:100vh}
-#top-row{display:flex}
-#settings{flex:1;padding:22px 22px 18px;transition:var(--tx)}
-#anim-panel{width:304px;flex-shrink:0;background:var(--canvas-bg);
-            display:flex;flex-direction:column;align-items:center;
-            padding:12px;gap:10px;border-left:1px solid var(--sep);transition:var(--tx)}
-.sep-h{height:1px;background:var(--sep);transition:var(--tx)}
-#bottom-row{flex:1;background:var(--bg);padding:14px 22px;
-            display:flex;flex-direction:column;transition:var(--tx)}
+#wrap{max-width:760px;margin:0 auto;padding:32px 20px 60px}
 
-/* ── Mode toggle pill ── */
-#mode-toggle{display:flex;background:var(--tog-track);border-radius:8px;
-             padding:2px;cursor:pointer;transition:var(--tx);user-select:none}
-.tog-seg{width:39px;height:28px;display:flex;align-items:center;justify-content:center;
-         border-radius:6px;font-size:15px;color:var(--tog-fg);transition:.18s;cursor:pointer}
-.tog-seg.active{background:var(--tog-sel);color:var(--tog-sel-fg)}
+header{margin-bottom:22px}
+h1{font-size:22px;font-weight:700}
+.sub{color:var(--hint);font-size:13.5px;margin-top:4px;line-height:1.5}
 
-/* ── Animation canvas ── */
-#anim-canvas{width:280px;height:280px;border-radius:4px;display:block}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;
+      padding:20px;margin-bottom:16px}
 
-/* ── Settings typography ── */
-#app-title{font-size:17px;font-weight:700;color:var(--title-fg);margin-bottom:18px;transition:var(--tx)}
-.lbl{display:block;font-size:10px;font-weight:700;text-transform:uppercase;
-     letter-spacing:.05em;color:var(--hint);margin-bottom:5px;transition:var(--tx)}
-.hint{font-size:11px;color:var(--hint);margin-top:3px;transition:var(--tx)}
-.fg{margin-bottom:12px}
+#drop{border:2px dashed var(--border);border-radius:10px;padding:28px 16px;
+      text-align:center;cursor:pointer;transition:.15s;position:relative;overflow:hidden}
+#drop:hover,#drop.over{border-color:var(--accent);background:var(--entry-bg)}
+#drop-text{color:var(--hint);font-size:14px}
+#drop-text b{color:var(--fg)}
+#preview{max-width:100%;max-height:280px;border-radius:8px;display:none;margin:0 auto}
+#fi{display:none}
 
-/* ── Three-column row ── */
-.row3{display:flex;gap:10px;margin-bottom:12px}
-.col{flex:1}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:14px}
+.field{display:flex;flex-direction:column;gap:4px}
+.field label{font-size:11px;font-weight:700;text-transform:uppercase;
+             letter-spacing:.04em;color:var(--hint)}
+.field input{background:var(--entry-bg);color:var(--fg);border:1px solid var(--border);
+             border-radius:6px;padding:7px 9px;font-size:13.5px;width:120px;font-family:inherit}
 
-/* ── Inputs / selects ── */
-input,select{width:100%;background:var(--entry-bg);color:var(--fg);border:none;
-             border-radius:5px;padding:7px 10px;font-size:13px;outline:none;
-             transition:var(--tx);font-family:inherit}
-input::placeholder{color:var(--hint)}
-input[type=number]{-moz-appearance:textfield}
-input[type=number]::-webkit-inner-spin-button{opacity:.4}
-select option{background:var(--entry-bg)}
-
-/* ── Drop zone ── */
-#drop-zone{display:flex;align-items:center;gap:8px;background:var(--entry-bg);
-           border-radius:5px;padding:7px 10px;cursor:pointer;
-           transition:var(--tx);margin-bottom:12px}
-#drop-zone:hover,#drop-zone.over{filter:brightness(1.12)}
-#drop-zone.over{outline:2px solid var(--run-bg)}
-#file-name{flex:1;font-size:13px;color:var(--hint);overflow:hidden;
-           text-overflow:ellipsis;white-space:nowrap;transition:var(--tx)}
-#file-name.loaded{color:var(--fg)}
-
-/* ── Small button ── */
-.btn{background:var(--btn-bg);color:var(--btn-fg);border:none;border-radius:5px;
-     padding:6px 12px;font-size:12px;cursor:pointer;white-space:nowrap;
-     transition:var(--tx);font-family:inherit}
-.btn:hover{background:var(--btn-act)}
-
-/* ── Checkboxes ── */
-.cb-row{display:flex;gap:20px;margin-bottom:12px}
-.cb-lbl{display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer}
-.cb-lbl input{cursor:pointer;accent-color:var(--run-bg);width:14px;height:14px}
-
-/* ── Sat row ── */
-.sat-row{display:flex;align-items:center;gap:8px}
-.sat-row input{width:80px;flex-shrink:0}
-
-/* ── Advanced panel ── */
-#adv-btn{background:var(--btn-bg);color:var(--btn-fg);border:none;border-radius:5px;
-         padding:7px 12px;font-size:13px;text-align:left;width:100%;
-         cursor:pointer;transition:var(--tx);font-family:inherit;margin-top:4px}
-#adv-btn:hover{background:var(--btn-act)}
-#adv-panel{display:none;background:var(--entry-bg);border-radius:6px;
-           padding:12px;margin-top:6px;transition:var(--tx)}
+#adv-toggle{background:none;border:none;color:var(--hint);font-size:12.5px;cursor:pointer;
+            padding:4px 0;text-decoration:underline;text-underline-offset:2px}
+#adv-panel{display:none;margin-top:10px;padding-top:12px;border-top:1px solid var(--border)}
 #adv-panel.open{display:block}
-.adv-row{display:flex;gap:16px}
-.adv-col{flex:1}
-.adv-col .lbl{margin-bottom:4px}
-.adv-col .hint{font-size:10px}
+#adv-panel .row{margin-top:0}
+.adv-hint{font-size:11px;color:var(--hint);margin-top:3px;max-width:220px}
 
-/* ── Log ── */
-#log-lbl{font-size:10px;font-weight:700;text-transform:uppercase;
-         letter-spacing:.05em;color:var(--hint);margin-bottom:6px;transition:var(--tx)}
-#log{min-height:130px;background:var(--log-bg);color:var(--log-fg);border-radius:6px;
-     padding:10px 12px;font-family:'Courier New',monospace;font-size:12px;
-     overflow-y:auto;white-space:pre-wrap;margin-bottom:10px;transition:var(--tx)}
-#run-row{display:flex;align-items:center;justify-content:space-between}
-#status{font-size:12px;color:var(--hint);transition:var(--tx)}
-#run-btn{background:var(--run-bg);color:var(--run-fg);border:none;border-radius:7px;
-         padding:10px 24px;font-size:14px;font-weight:700;cursor:pointer;
-         transition:var(--tx);font-family:inherit}
-#run-btn:hover:not(:disabled){background:var(--run-act)}
-#run-btn:disabled{opacity:.45;cursor:not-allowed}
+#run-btn{background:var(--accent);color:var(--accent-fg);border:none;border-radius:8px;
+         padding:11px 22px;font-size:14.5px;font-weight:700;cursor:pointer;font-family:inherit;
+         margin-top:16px;width:100%}
+#run-btn:hover:not(:disabled){background:var(--accent-hover)}
+#run-btn:disabled{opacity:.4;cursor:not-allowed}
 
-/* ── Result panel ── */
-#result-panel{display:none;background:var(--bg);padding:0 22px 22px;transition:var(--tx)}
-.res-hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
-#res-count{font-size:22px;font-weight:700;color:var(--title-fg);transition:var(--tx)}
-#res-acc{font-size:13px;color:var(--hint);transition:var(--tx)}
-#res-canvas{max-width:100%;border-radius:6px;display:block}
-#dl-btn{margin-top:10px}
+#log-wrap{display:none}
+#log{background:var(--log-bg);color:var(--log-fg);border-radius:8px;padding:12px 14px;
+     font-family:ui-monospace,'SF Mono','Courier New',monospace;font-size:12px;
+     line-height:1.6;white-space:pre-wrap;max-height:160px;overflow-y:auto;margin-top:14px}
+
+#result{display:none}
+.res-hdr{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;flex-wrap:wrap;gap:6px}
+#res-count{font-size:26px;font-weight:800}
+#res-acc{font-size:13.5px;color:var(--hint)}
+#res-acc.good{color:var(--good)}
+#res-canvas{max-width:100%;border-radius:8px;display:block;border:1px solid var(--border)}
+.res-actions{display:flex;gap:10px;margin-top:12px}
+.btn{background:var(--btn-bg);color:var(--btn-fg);border:1px solid var(--border);border-radius:7px;
+     padding:9px 16px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+.btn:hover{background:var(--btn-hover)}
+
+footer{text-align:center;color:var(--hint);font-size:12px;margin-top:24px}
+footer a{color:inherit}
+
+#theme-toggle{position:fixed;top:18px;right:18px;background:var(--panel);border:1px solid var(--border);
+              border-radius:20px;width:34px;height:34px;display:flex;align-items:center;justify-content:center;
+              cursor:pointer;font-size:15px}
 </style>
 </head>
 <body>
-<div id="app">
+<div id="theme-toggle" title="Toggle theme">◑</div>
+<div id="wrap">
 
-<!-- ═══════════ TOP ROW ═══════════ -->
-<div id="top-row">
+<header>
+  <h1>Colony Counter</h1>
+  <div class="sub">Upload an overhead photo of a plate — taken straight down, evenly lit, no glare —
+    and it's counted automatically. No settings required.</div>
+</header>
 
-  <!-- LEFT: settings -->
-  <div id="settings">
-    <div id="app-title">Bacterial Colony Counter</div>
+<div class="card">
+  <div id="drop">
+    <img id="preview">
+    <div id="drop-text"><b>Click to upload</b> or drag a photo here<br>JPEG/PNG, taken from directly above the dish</div>
+  </div>
+  <input type="file" id="fi" accept="image/*">
 
-    <!-- Image drop zone -->
-    <div class="lbl">Image file</div>
-    <div id="drop-zone">
-      <span id="file-name">Drag &amp; drop or click to browse…</span>
-      <button class="btn" onclick="document.getElementById('fi').click()">Browse</button>
+  <div class="row">
+    <div class="field">
+      <label for="manual">Manual count (optional)</label>
+      <input type="number" id="manual" placeholder="—" min="0">
     </div>
-    <input type="file" id="fi" accept="image/*" style="display:none">
-
-    <!-- Three-column row -->
-    <div class="row3">
-      <div class="col">
-        <span class="lbl">Manual count</span>
-        <input type="number" id="manual" placeholder="Optional" min="0">
-        <div class="hint">Leave blank if unknown</div>
-      </div>
-      <div class="col">
-        <span class="lbl">Plate type</span>
-        <select id="plate">
-          <option value="standard">standard</option>
-          <option value="light_agar">light_agar</option>
-        </select>
-        <div class="hint" id="plate-hint">Dark agar — LB / LB-Amp plates</div>
-      </div>
-      <div class="col">
-        <span class="lbl">Colony size</span>
-        <select id="size">
-          <option value="tiny">tiny</option>
-          <option value="medium" selected>medium</option>
-          <option value="large">large</option>
-          <option value="mixed">mixed</option>
-        </select>
-        <div class="hint" id="size-hint">0.1 – 2.0 mm diameter</div>
-      </div>
-    </div>
-
-    <!-- Checkboxes -->
-    <div class="cb-row">
-      <label class="cb-lbl"><input type="checkbox" id="grid"> Grid lines visible</label>
-      <label class="cb-lbl"><input type="checkbox" id="save" checked> Download result</label>
-    </div>
-
-    <!-- Satellite exclusion -->
-    <div class="fg">
-      <span class="lbl">Exclude colonies smaller than</span>
-      <div class="sat-row">
-        <input type="number" id="sat" value="0.0" step="0.1" min="0">
-        <span class="hint">mm &nbsp;(0.0 = off)</span>
-      </div>
-    </div>
-
-    <!-- Advanced -->
-    <button id="adv-btn" onclick="toggleAdv()">▶&nbsp; Advanced settings</button>
-    <div id="adv-panel">
-      <div class="adv-row">
-        <div class="adv-col">
-          <span class="lbl">Min circularity</span>
-          <input type="number" id="circ" value="0.30" step="0.05" min="0" max="1">
-          <div class="hint">0.30 permissive · 0.55 strict</div>
-        </div>
-        <div class="adv-col">
-          <span class="lbl">BG sigma (0 = auto)</span>
-          <input type="number" id="sigma" value="0" min="0">
-          <div class="hint">Larger = more bg removed</div>
-        </div>
-        <div class="adv-col">
-          <span class="lbl">Threshold offset</span>
-          <input type="number" id="toff" value="0">
-          <div class="hint">+ fewer &nbsp;· − more</div>
-        </div>
-      </div>
-    </div>
-  </div><!-- /settings -->
-
-  <!-- RIGHT: animation + toggle -->
-  <div id="anim-panel">
-    <div id="mode-toggle">
-      <div class="tog-seg" data-m="light"   title="Light"   onclick="setMode('light')">☀</div>
-      <div class="tog-seg active" data-m="default" title="Default" onclick="setMode('default')">◑</div>
-      <div class="tog-seg" data-m="dark"    title="Dark"    onclick="setMode('dark')">☾</div>
-    </div>
-    <canvas id="anim-canvas" width="280" height="280"></canvas>
   </div>
 
-</div><!-- /top-row -->
-
-<div class="sep-h"></div>
-
-<!-- ═══════════ BOTTOM: log + run ═══════════ -->
-<div id="bottom-row">
-  <div id="log-lbl">Output log</div>
-  <div id="log">Ready. Load an image and click Run Analysis.</div>
-  <div id="run-row">
-    <span id="status">Ready.</span>
-    <button id="run-btn" onclick="runAnalysis()">Run Analysis</button>
+  <button id="adv-toggle">▸ Advanced settings</button>
+  <div id="adv-panel">
+    <div class="row">
+      <div class="field">
+        <label for="offset">Sensitivity offset</label>
+        <input type="number" id="offset" value="-10" step="1">
+        <div class="adv-hint">More negative catches fainter colonies but risks noise. Default −10.</div>
+      </div>
+      <div class="field">
+        <label for="diam">Dish diameter (mm)</label>
+        <input type="number" id="diam" value="90" min="1" step="1">
+        <div class="adv-hint">Only affects the reported mm scale, not the count.</div>
+      </div>
+    </div>
   </div>
+
+  <button id="run-btn" disabled>Count Colonies</button>
+
+  <div id="log-wrap"><div id="log"></div></div>
 </div>
 
-<div class="sep-h" id="res-sep" style="display:none"></div>
-
-<!-- ═══════════ RESULT ═══════════ -->
-<div id="result-panel">
+<div class="card" id="result">
   <div class="res-hdr">
     <span id="res-count"></span>
     <span id="res-acc"></span>
   </div>
   <canvas id="res-canvas"></canvas>
-  <button class="btn" id="dl-btn" onclick="downloadResult()" style="margin-top:10px">
-    Download result image
-  </button>
+  <div class="res-actions">
+    <button class="btn" id="dl-btn">Download annotated image</button>
+  </div>
 </div>
 
-</div><!-- /app -->
+<footer>Runs entirely in your browser — no photo is uploaded anywhere.</footer>
+
+</div>
+
 <script>
 'use strict';
 
-// ════════════════════════════════════════════════════════════
-// THEMES  (exact colours from the desktop app)
-// ════════════════════════════════════════════════════════════
-const THEMES = {
-  light: {
-    '--bg':'#ffffff','--fg':'#1e293b','--hint':'#64748b',
-    '--entry-bg':'#f1f5f9','--entry-fg':'#1e293b',
-    '--sep':'#dde3ee','--btn-bg':'#e2e8f0','--btn-fg':'#334155','--btn-act':'#c8d3e3',
-    '--run-bg':'#2563eb','--run-fg':'#334155','--run-act':'#1d4ed8',
-    '--title-fg':'#1d4ed8','--log-bg':'#f8fafc','--log-fg':'#334155',
-    '--canvas-bg':'#eef2f7','--tog-track':'#dde3ee',
-    '--tog-sel':'#2563eb','--tog-sel-fg':'#ffffff','--tog-fg':'#94a3b8',
-  },
-  default: {
-    '--bg':'#464f61','--fg':'#f1f5f9','--hint':'#c0cad8',
-    '--entry-bg':'#3d4655','--entry-fg':'#f1f5f9',
-    '--sep':'#68778a','--btn-bg':'#68778a','--btn-fg':'#f1f5f9','--btn-act':'#78889a',
-    '--run-bg':'#60a5fa','--run-fg':'#1e3a5f','--run-act':'#3b82f6',
-    '--title-fg':'#93c5fd','--log-bg':'#3d4655','--log-fg':'#c0cad8',
-    '--canvas-bg':'#555f71','--tog-track':'#3a4352',
-    '--tog-sel':'#60a5fa','--tog-sel-fg':'#1e3a5f','--tog-fg':'#8896ab',
-  },
-  dark: {
-    '--bg':'#2e2e2e','--fg':'#f1f5f9','--hint':'#909090',
-    '--entry-bg':'#2a2a2a','--entry-fg':'#334155',
-    '--sep':'#505050','--btn-bg':'#4a4a4a','--btn-fg':'#334155','--btn-act':'#5a5a5a',
-    '--run-bg':'#5b8dee','--run-fg':'#334155','--run-act':'#4070d4',
-    '--title-fg':'#7eb8f7','--log-bg':'#222222','--log-fg':'#c0c0c0',
-    '--canvas-bg':'#3a3a3a','--tog-track':'#252525',
-    '--tog-sel':'#5b8dee','--tog-sel-fg':'#334155','--tog-fg':'#666666',
-  },
-};
+/* ═══════════════════════════ THEME ═══════════════════════════ */
+(function(){
+  const stored = localStorage.getItem('cc-theme');
+  if (stored) document.documentElement.setAttribute('data-theme', stored);
+  document.getElementById('theme-toggle').addEventListener('click', () => {
+    const cur = document.documentElement.getAttribute('data-theme') ||
+      (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    const next = cur === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', next);
+    localStorage.setItem('cc-theme', next);
+  });
+})();
 
-let curMode = 'default';
+/* ═══════════════════════════ TUNED DEFAULTS ═══════════════════════════
+   Mirrors colony_counter.py — see that file for the calibration notes.  */
+const MIN_CIRCULARITY = 0.55;      // JS uses a coarser (border-count) perimeter
+const MIN_SOLIDITY = 0.86;         // estimate than skimage, so thresholds are
+const MIN_COLONY_DIAM_FRAC = 0.0028; // re-tuned slightly rather than copied 1:1.
+const MAX_COLONY_DIAM_FRAC = 0.05;
+const MAX_DIM = 3600;              // processing resolution cap
 
-function setMode(m) {
-  curMode = m;
-  const root = document.documentElement;
-  for (const [k,v] of Object.entries(THEMES[m])) root.style.setProperty(k, v);
-  document.querySelectorAll('.tog-seg').forEach(el =>
-    el.classList.toggle('active', el.dataset.m === m));
-}
-
-// ════════════════════════════════════════════════════════════
-// ANIMATION — all three videos play in parallel (muted, hidden);
-// a requestAnimationFrame loop copies the active one to the canvas.
-// Switching themes is instant and seamless.
-// ════════════════════════════════════════════════════════════
-const VID_SRCS = {
-  light:   'assets/anim_light.mp4',
-  default: 'assets/anim_default.mp4',
-  dark:    'assets/anim_dark.mp4',
-};
-const pool = {};
-const animCtx = document.getElementById('anim-canvas').getContext('2d');
-const ANIM_W = 280, ANIM_H = 280;
-
-function initAnim() {
-  let ready = 0;
-  const total = Object.keys(VID_SRCS).length;
-
-  for (const [m, src] of Object.entries(VID_SRCS)) {
-    const v = Object.assign(document.createElement('video'),
-      { src, muted:true, loop:true, playsInline:true });
-    v.setAttribute('playsinline','');
-    v.style.cssText = 'position:fixed;top:-9999px;width:1px;height:1px;opacity:0';
-    document.body.appendChild(v);
-    pool[m] = v;
-
-    const tryPlay = () => { v.play().catch(()=>{}); };
-    v.addEventListener('canplay', () => { tryPlay(); if (++ready === total) schedFrameLoop(); }, {once:true});
-    v.addEventListener('error',   () => { if (++ready === total) schedFrameLoop(); }, {once:true});
-    v.load();
-  }
-
-  // Fallback: start loop even if videos never fire canplay (e.g. file not found)
-  setTimeout(schedFrameLoop, 2000);
-}
-
-let loopStarted = false;
-function schedFrameLoop() {
-  if (loopStarted) return;
-  loopStarted = true;
-  frameLoop();
-}
-
-function frameLoop() {
-  const v = pool[curMode];
-  if (v && v.readyState >= 2) {
-    animCtx.drawImage(v, 0, 0, ANIM_W, ANIM_H);
-  } else {
-    // Placeholder gradient
-    const t = THEMES[curMode];
-    const g = animCtx.createLinearGradient(0, 0, 0, ANIM_H);
-    g.addColorStop(0, t['--canvas-bg']);
-    g.addColorStop(1, darken(t['--canvas-bg'], 20));
-    animCtx.fillStyle = g;
-    animCtx.fillRect(0, 0, ANIM_W, ANIM_H);
-    animCtx.fillStyle = THEMES[curMode]['--hint'];
-    animCtx.font = '12px -apple-system,sans-serif';
-    animCtx.textAlign = 'center';
-    animCtx.fillText('Place anim_light/default/dark.mp4', ANIM_W/2, ANIM_H/2-8);
-    animCtx.fillText('in assets/ folder', ANIM_W/2, ANIM_H/2+10);
-  }
-  requestAnimationFrame(frameLoop);
-}
-
-function darken(hex, amt) {
-  const n = parseInt(hex.slice(1),16);
-  const r = Math.max(0,((n>>16)&255)-amt);
-  const g = Math.max(0,((n>>8)&255)-amt);
-  const b = Math.max(0,(n&255)-amt);
-  return '#'+[r,g,b].map(x=>x.toString(16).padStart(2,'0')).join('');
-}
-
-// ════════════════════════════════════════════════════════════
-// FILE HANDLING
-// ════════════════════════════════════════════════════════════
+/* ═══════════════════════════ UI WIRING ═══════════════════════════ */
+const dz = document.getElementById('drop');
+const fi = document.getElementById('fi');
+const preview = document.getElementById('preview');
+const dropText = document.getElementById('drop-text');
+const runBtn = document.getElementById('run-btn');
 let loadedImg = null;
 
-const dz = document.getElementById('drop-zone');
-const fi = document.getElementById('fi');
-const fn = document.getElementById('file-name');
-
+dz.addEventListener('click', () => fi.click());
 dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('over'); });
 dz.addEventListener('dragleave', () => dz.classList.remove('over'));
 dz.addEventListener('drop', e => {
@@ -380,66 +197,58 @@ dz.addEventListener('drop', e => {
   const f = e.dataTransfer.files[0];
   if (f && f.type.startsWith('image/')) loadFile(f);
 });
-dz.addEventListener('click', () => fi.click());
 fi.addEventListener('change', () => { if (fi.files[0]) loadFile(fi.files[0]); });
 
 function loadFile(f) {
-  fn.textContent = f.name; fn.classList.add('loaded');
   const r = new FileReader();
   r.onload = e => {
     const img = new Image();
-    img.onload = () => { loadedImg = img; log(`Image loaded: ${img.width}×${img.height} px`); };
+    img.onload = () => {
+      loadedImg = img;
+      preview.src = e.target.result;
+      preview.style.display = 'block';
+      dropText.style.display = 'none';
+      runBtn.disabled = false;
+      document.getElementById('result').style.display = 'none';
+    };
     img.src = e.target.result;
   };
   r.readAsDataURL(f);
 }
 
-// ════════════════════════════════════════════════════════════
-// UI HELPERS
-// ════════════════════════════════════════════════════════════
-const PLATE_HINTS = {standard:'Dark agar — LB / LB-Amp plates', light_agar:'Cream agar — use satellite exclusion'};
-const SIZE_HINTS  = {tiny:'< 0.6 mm', medium:'0.1 – 2.0 mm', large:'0.8 – 7.0 mm', mixed:'any size'};
+document.getElementById('adv-toggle').addEventListener('click', () => {
+  const p = document.getElementById('adv-panel');
+  const open = p.classList.toggle('open');
+  document.getElementById('adv-toggle').textContent = (open ? '▾' : '▸') + ' Advanced settings';
+});
 
-document.getElementById('plate').addEventListener('change', e =>
-  document.getElementById('plate-hint').textContent = PLATE_HINTS[e.target.value]||'');
-document.getElementById('size').addEventListener('change', e =>
-  document.getElementById('size-hint').textContent = SIZE_HINTS[e.target.value]||'');
+runBtn.addEventListener('click', runAnalysis);
 
-let advOpen = false;
-function toggleAdv() {
-  advOpen = !advOpen;
-  document.getElementById('adv-panel').classList.toggle('open', advOpen);
-  document.getElementById('adv-btn').textContent = (advOpen?'▼':'▶') + '  Advanced settings';
-}
-
+const logWrap = document.getElementById('log-wrap');
+const logEl = document.getElementById('log');
 function log(msg) {
-  const el = document.getElementById('log');
-  el.textContent += (el.textContent ? '\n' : '') + msg;
-  el.scrollTop = el.scrollHeight;
+  logWrap.style.display = 'block';
+  logEl.textContent += (logEl.textContent ? '\n' : '') + msg;
+  logEl.scrollTop = logEl.scrollHeight;
 }
-function setStatus(msg) { document.getElementById('status').textContent = msg; }
 
-// ════════════════════════════════════════════════════════════
-// IMAGE PROCESSING  (pure JS, O(W·H) pipeline)
-// ════════════════════════════════════════════════════════════
-const MAX_DIM = 900;
-
-function resized(img) {
-  const sc = Math.min(1, MAX_DIM / Math.max(img.width, img.height));
-  const w = Math.round(img.width*sc), h = Math.round(img.height*sc);
+/* ═══════════════════════════ IMAGE / CANVAS HELPERS ═══════════════════════════ */
+function resized(img, maxDim) {
+  const sc = Math.min(1, maxDim / Math.max(img.width, img.height));
+  const w = Math.max(1, Math.round(img.width * sc)), h = Math.max(1, Math.round(img.height * sc));
   const c = document.createElement('canvas');
-  c.width=w; c.height=h;
+  c.width = w; c.height = h;
   c.getContext('2d').drawImage(img, 0, 0, w, h);
-  return {c, sc, w, h};
+  return { c, sc, w, h };
 }
 
 function toGray(data, n) {
   const g = new Uint8Array(n);
-  for (let i=0;i<n;i++) g[i] = 0.299*data[i*4] + 0.587*data[i*4+1] + 0.114*data[i*4+2];
+  for (let i = 0; i < n; i++) g[i] = (0.299*data[i*4] + 0.587*data[i*4+1] + 0.114*data[i*4+2]) | 0;
   return g;
 }
 
-// O(W·H) box blur via integral image
+/* ═══════════════════════════ BASIC FILTERS ═══════════════════════════ */
 function integral(g, w, h) {
   const ii = new Float64Array((w+1)*(h+1));
   for (let y=0;y<h;y++)
@@ -457,67 +266,19 @@ function boxBlur(g, w, h, r) {
   return out;
 }
 function gaussBlur(g, w, h, sigma) {
-  const r=Math.max(1,Math.round(sigma*0.85));
+  const r = Math.max(1, Math.round(sigma*0.85));
   return boxBlur(boxBlur(boxBlur(g,w,h,r),w,h,r),w,h,r);
 }
 
-// O(W·H) separable erosion / dilation using prefix sums (any kernel size)
-function erodeH(b,w,h,kw) {
-  const hw=Math.floor(kw/2), out=new Uint8Array(w*h);
-  for (let y=0;y<h;y++) {
-    const ps=new Int32Array(w+1);
-    for (let x=0;x<w;x++) ps[x+1]=ps[x]+b[y*w+x];
-    for (let x=0;x<w;x++) {
-      if (x-hw<0||x+hw>=w) { out[y*w+x]=0; continue; }
-      out[y*w+x]=(ps[x+hw+1]-ps[x-hw]===kw)?1:0;
-    }
-  }
-  return out;
-}
-function erodeV(b,w,h,kh) {
-  const hh=Math.floor(kh/2), out=new Uint8Array(w*h);
-  for (let x=0;x<w;x++) {
-    const ps=new Int32Array(h+1);
-    for (let y=0;y<h;y++) ps[y+1]=ps[y]+b[y*w+x];
-    for (let y=0;y<h;y++) {
-      if (y-hh<0||y+hh>=h) { out[y*w+x]=0; continue; }
-      out[y*w+x]=(ps[y+hh+1]-ps[y-hh]===kh)?1:0;
-    }
-  }
-  return out;
-}
-function dilateH(b,w,h,kw) {
-  const hw=Math.floor(kw/2), out=new Uint8Array(w*h);
-  for (let y=0;y<h;y++) {
-    const ps=new Int32Array(w+1);
-    for (let x=0;x<w;x++) ps[x+1]=ps[x]+b[y*w+x];
-    for (let x=0;x<w;x++) {
-      const x0=Math.max(0,x-hw),x1=Math.min(w-1,x+hw);
-      out[y*w+x]=(ps[x1+1]-ps[x0]>0)?1:0;
-    }
-  }
-  return out;
-}
-function dilateV(b,w,h,kh) {
-  const hh=Math.floor(kh/2), out=new Uint8Array(w*h);
-  for (let x=0;x<w;x++) {
-    const ps=new Int32Array(h+1);
-    for (let y=0;y<h;y++) ps[y+1]=ps[y]+b[y*w+x];
-    for (let y=0;y<h;y++) {
-      const y0=Math.max(0,y-hh),y1=Math.min(h-1,y+hh);
-      out[y*w+x]=(ps[y1+1]-ps[y0]>0)?1:0;
-    }
-  }
-  return out;
-}
-function erode(b,w,h,kw,kh) { return erodeV(erodeH(b,w,h,kw),w,h,kh); }
-function dilate(b,w,h,kw,kh){ return dilateV(dilateH(b,w,h,kw),w,h,kh);}
-function morphOpen(b,w,h,kw,kh){ return dilate(erode(b,w,h,kw,kh),w,h,kw,kh); }
+function erodeH(b,w,h,kw){const hw=kw>>1,out=new Uint8Array(w*h);for(let y=0;y<h;y++){const ps=new Int32Array(w+1);for(let x=0;x<w;x++)ps[x+1]=ps[x]+b[y*w+x];for(let x=0;x<w;x++){if(x-hw<0||x+hw>=w){out[y*w+x]=0;continue;}out[y*w+x]=(ps[x+hw+1]-ps[x-hw]===kw)?1:0;}}return out;}
+function erodeV(b,w,h,kh){const hh=kh>>1,out=new Uint8Array(w*h);for(let x=0;x<w;x++){const ps=new Int32Array(h+1);for(let y=0;y<h;y++)ps[y+1]=ps[y]+b[y*w+x];for(let y=0;y<h;y++){if(y-hh<0||y+hh>=h){out[y*w+x]=0;continue;}out[y*w+x]=(ps[y+hh+1]-ps[y-hh]===kh)?1:0;}}return out;}
+function dilateH(b,w,h,kw){const hw=kw>>1,out=new Uint8Array(w*h);for(let y=0;y<h;y++){const ps=new Int32Array(w+1);for(let x=0;x<w;x++)ps[x+1]=ps[x]+b[y*w+x];for(let x=0;x<w;x++){const x0=Math.max(0,x-hw),x1=Math.min(w-1,x+hw);out[y*w+x]=(ps[x1+1]-ps[x0]>0)?1:0;}}return out;}
+function dilateV(b,w,h,kh){const hh=kh>>1,out=new Uint8Array(w*h);for(let x=0;x<w;x++){const ps=new Int32Array(h+1);for(let y=0;y<h;y++)ps[y+1]=ps[y]+b[y*w+x];for(let y=0;y<h;y++){const y0=Math.max(0,y-hh),y1=Math.min(h-1,y+hh);out[y*w+x]=(ps[y1+1]-ps[y0]>0)?1:0;}}return out;}
+function morphOpen(b,w,h,k){const e=erodeV(erodeH(b,w,h,k),w,h,k);return dilateV(dilateH(e,w,h,k),w,h,k);}
 
-// Otsu threshold
 function otsu(g, mask, w, h) {
   const hist=new Int32Array(256); let n=0;
-  for (let i=0;i<w*h;i++) { if (!mask||mask[i]) { hist[g[i]]++; n++; } }
+  for (let i=0;i<w*h;i++) if (!mask||mask[i]) { hist[g[i]]++; n++; }
   let sum=0; for (let i=0;i<256;i++) sum+=i*hist[i];
   let best=-1,t=128,sumB=0,wB=0;
   for (let v=0;v<256;v++) {
@@ -530,239 +291,475 @@ function otsu(g, mask, w, h) {
   return t;
 }
 
-// Detect the circular dish — threshold + find largest blob, derive radius from area
-function detectDish(g, w, h) {
-  const bl=gaussBlur(g,w,h,5);
-  const bin=new Uint8Array(w*h);
-  for (let i=0;i<w*h;i++) bin[i]=bl[i]>30?1:0;
-  const {areas,sx,sy}=blobStats(bin,w,h);
-
-  let bestArea=0,bx=w/2,by=h/2;
-  for (const [,area] of areas) if(area>bestArea){bestArea=area;}
-  for (const [lbl,area] of areas) {
-    if(area===bestArea){bx=sx.get(lbl)/area;by=sy.get(lbl)/area;}
-  }
-  const r=Math.min(Math.sqrt(bestArea/Math.PI), Math.min(w,h)*0.48);
-  return {cx:bx,cy:by,r};
-}
-
-function dishMask(w,h,cx,cy,r,inset=8) {
-  const m=new Uint8Array(w*h), ri2=(r-inset)**2;
-  for (let y=0;y<h;y++) for (let x=0;x<w;x++)
-    m[y*w+x]=((x-cx)**2+(y-cy)**2<ri2)?1:0;
-  return m;
-}
-
-function subtractBg(g,w,h,mask,sigma) {
-  const bg=gaussBlur(g,w,h,sigma);
-  // Saturating subtract — matches cv2.subtract (clips negatives to 0)
-  const raw=new Uint8Array(w*h);
-  for (let i=0;i<w*h;i++) raw[i]=Math.max(0,g[i]-bg[i]);
-  // NORM_MINMAX over whole image — matches cv2.normalize(…, NORM_MINMAX)
-  let mn=255,mx=0;
-  for (let i=0;i<w*h;i++){if(raw[i]<mn)mn=raw[i];if(raw[i]>mx)mx=raw[i];}
-  const rng=mx-mn||1;
-  const out=new Uint8Array(w*h);
-  for (let i=0;i<w*h;i++) out[i]=Math.round((raw[i]-mn)*255/rng);
-  // Apply dish mask after normalization — matches cv2.bitwise_and after normalize
-  if(mask) for(let i=0;i<w*h;i++) if(!mask[i]) out[i]=0;
-  return out;
-}
-
-function removeGrid(bin,w,h,r) {
-  const klen=Math.min(120,Math.max(40,Math.round(r*0.06)));
-  const lines=new Uint8Array(w*h);
-  const h2=morphOpen(bin,w,h,klen,1), v2=morphOpen(bin,w,h,1,klen);
-  for (let i=0;i<w*h;i++) lines[i]=h2[i]|v2[i];
-  const dl=dilate(lines,w,h,5,5);
-  const out=new Uint8Array(w*h);
-  for (let i=0;i<w*h;i++) out[i]=bin[i]&(dl[i]?0:1);
-  return out;
-}
-
-// Connected components — returns per-label maps (shared by detectDish + colony finding)
-function blobStats(bin, w, h) {
+/* ═══════════════════════════ CONNECTED COMPONENTS (4-connected) ═══════════════════════════ */
+function labelComponents(bin, w, h) {
   const labels=new Int32Array(w*h), parent=[0]; let next=1;
   function find(x){while(parent[x]!==x){parent[x]=parent[parent[x]];x=parent[x];}return x;}
   function union(a,b){a=find(a);b=find(b);if(a!==b)parent[a]=b;return b;}
-
   for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
     const i=y*w+x; if(!bin[i])continue;
-    // 8-connected: left, upper-left, up, upper-right — matches skimage connectivity=2
-    const lL =x>0        &&bin[i-1]    ?find(labels[i-1])  :0;
-    const lUL=x>0  &&y>0 &&bin[i-w-1] ?find(labels[i-w-1]):0;
-    const lU =       y>0 &&bin[i-w]    ?find(labels[i-w])  :0;
-    const lUR=x<w-1&&y>0 &&bin[i-w+1] ?find(labels[i-w+1]):0;
-    const nbrs=[lL,lUL,lU,lUR].filter(l=>l>0);
-    if(!nbrs.length){labels[i]=next;parent[next]=next;next++;}
-    else{let r=nbrs[0];for(let k=1;k<nbrs.length;k++)r=union(r,nbrs[k]);labels[i]=find(r);}
+    const lL = x>0 && bin[i-1] ? find(labels[i-1]) : 0;
+    const lU = y>0 && bin[i-w] ? find(labels[i-w]) : 0;
+    if (!lL && !lU) { labels[i]=next; parent[next]=next; next++; }
+    else if (lL && !lU) labels[i]=lL;
+    else if (!lL && lU) labels[i]=lU;
+    else labels[i]=union(lL,lU);
   }
-
-  const areas=new Map(),sx=new Map(),sy=new Map(),perim=new Map();
-  for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
-    const i=y*w+x; if(!bin[i])continue;
-    const lb=find(labels[i]); labels[i]=lb;
-    areas.set(lb,(areas.get(lb)||0)+1);
-    sx.set(lb,(sx.get(lb)||0)+x);
-    sy.set(lb,(sy.get(lb)||0)+y);
-    const brd=(x===0||!bin[i-1])||(x===w-1||!bin[i+1])||(y===0||!bin[i-w])||(y===h-1||!bin[i+w]);
-    if(brd) perim.set(lb,(perim.get(lb)||0)+1);
-  }
-  return {areas,sx,sy,perim};
+  for (let i=0;i<w*h;i++) if (labels[i]) labels[i]=find(labels[i]);
+  return labels;
 }
 
-function findColonies(bin,w,h) {
-  const {areas,sx,sy,perim}=blobStats(bin,w,h);
-  const out=[];
-  for (const [lb,area] of areas) {
-    const p=perim.get(lb)||1;
-    out.push({area, circ:(4*Math.PI*area)/(p*p),
-              cx:sx.get(lb)/area, cy:sy.get(lb)/area,
-              r:Math.sqrt(area/Math.PI)});
+function largestBlob(bin, w, h) {
+  const labels = labelComponents(bin, w, h);
+  const area=new Map(), sx=new Map(), sy=new Map();
+  for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
+    const i=y*w+x; const l=labels[i]; if(!l) continue;
+    area.set(l,(area.get(l)||0)+1); sx.set(l,(sx.get(l)||0)+x); sy.set(l,(sy.get(l)||0)+y);
+  }
+  let bestL=0,bestA=0;
+  for (const [l,a] of area) if (a>bestA) { bestA=a; bestL=l; }
+  if (!bestL) return null;
+  return { cx: sx.get(bestL)/bestA, cy: sy.get(bestL)/bestA, area: bestA,
+           r: Math.sqrt(bestA/Math.PI) };
+}
+
+/* ═══════════════════════════ DISH + AGAR-RADIUS DETECTION ═══════════════════════════ */
+function detectDish(gray, w, h) {
+  const t = otsu(gray, null, w, h);
+  const bin = new Uint8Array(w*h);
+  for (let i=0;i<w*h;i++) bin[i] = gray[i] > t ? 1 : 0;
+  const blob = largestBlob(bin, w, h);
+  if (!blob) throw new Error('Could not find the dish — is the plate on a plain, dark background with even lighting?');
+  return blob;
+}
+
+function detectAgarRadius(gray, cx, cy, r, w, h) {
+  const nSamples = 360;
+  const cosT = new Float64Array(nSamples), sinT = new Float64Array(nSamples);
+  for (let i=0;i<nSamples;i++) { const th = 2*Math.PI*i/nSamples; cosT[i]=Math.cos(th); sinT[i]=Math.sin(th); }
+
+  function ringMedian(rad) {
+    const vals = new Uint8Array(nSamples);
+    for (let i=0;i<nSamples;i++) {
+      const x = Math.min(w-1, Math.max(0, Math.round(cx + rad*cosT[i])));
+      const y = Math.min(h-1, Math.max(0, Math.round(cy + rad*sinT[i])));
+      vals[i] = gray[y*w+x];
+    }
+    const sorted = Array.from(vals).sort((a,b)=>a-b);
+    return sorted[nSamples>>1];
+  }
+
+  const baseline = ringMedian(r*0.5);
+  const step = Math.max(1, Math.round(r*0.004));
+  const startR = Math.round(r*0.97);
+  const minR = Math.round(r*0.75);
+  const consecNeeded = 3;
+  let consec = 0, found = null;
+  for (let rad = startR; rad > minR; rad -= step) {
+    if (ringMedian(rad) <= baseline + 8) {
+      consec++;
+      if (consec >= consecNeeded) { found = rad + (consecNeeded-1)*step; break; }
+    } else consec = 0;
+  }
+  let agarR = found !== null ? found : Math.round(r*(1-0.14));
+  agarR = Math.round(agarR - r*0.01);
+  return Math.max(minR, agarR);
+}
+
+function dishMask(w, h, cx, cy, r) {
+  const m = new Uint8Array(w*h), r2 = r*r;
+  const x0 = Math.max(0, Math.floor(cx-r)), x1 = Math.min(w-1, Math.ceil(cx+r));
+  const y0 = Math.max(0, Math.floor(cy-r)), y1 = Math.min(h-1, Math.ceil(cy+r));
+  for (let y=y0;y<=y1;y++) for (let x=x0;x<=x1;x++)
+    if ((x-cx)**2+(y-cy)**2 <= r2) m[y*w+x]=1;
+  return m;
+}
+
+/* ═══════════════════════════ DISTANCE TRANSFORM (exact squared EDT) ═══════════════════════════
+   Felzenszwalt & Huttenlocher two-pass 1D lower-envelope algorithm.        */
+const DT_INF = 1e10;
+function dt1d(f, n, out) {
+  const v = new Int32Array(n), z = new Float64Array(n+1);
+  let k = 0; v[0]=0; z[0]=-DT_INF; z[1]=DT_INF;
+  for (let q=1;q<n;q++) {
+    let s;
+    for (;;) {
+      s = ((f[q]+q*q) - (f[v[k]]+v[k]*v[k])) / (2*q - 2*v[k]);
+      if (s <= z[k]) k--; else break;
+    }
+    k++; v[k]=q; z[k]=s; z[k+1]=DT_INF;
+  }
+  k=0;
+  for (let q=0;q<n;q++) {
+    while (z[k+1] < q) k++;
+    const dx = q-v[k];
+    out[q] = dx*dx + f[v[k]];
+  }
+}
+function distanceTransform(binary, w, h) {
+  const g = new Float64Array(w*h);
+  let colIn = new Float64Array(h), colOut = new Float64Array(h);
+  for (let x=0;x<w;x++) {
+    for (let y=0;y<h;y++) colIn[y] = binary[y*w+x] ? DT_INF : 0;
+    dt1d(colIn, h, colOut);
+    for (let y=0;y<h;y++) g[y*w+x] = colOut[y];
+  }
+  const out = new Float32Array(w*h);
+  let rowIn = new Float64Array(w), rowOut = new Float64Array(w);
+  for (let y=0;y<h;y++) {
+    for (let x=0;x<w;x++) rowIn[x] = g[y*w+x];
+    dt1d(rowIn, w, rowOut);
+    for (let x=0;x<w;x++) out[y*w+x] = Math.sqrt(rowOut[x]);
   }
   return out;
 }
 
-function mmPx(mm, dishR) { const rp=(mm/2)*(dishR/45); return Math.PI*rp*rp; }
+/* ═══════════════════════════ PEAK FINDING (regional maxima, skimage-style) ═══════════════════════════
+   A candidate must be the maximum within a (2·minDistance+1) square window —
+   not just "far enough from other accepted peaks" (that greedy-NMS shortcut
+   lets multiple points inside one small blob all count as separate peaks,
+   since none of them individually violate the separation rule). Uses an
+   O(n) sliding-window-maximum (monotonic deque) for the square max-filter,
+   then merges flat plateaus (ties) into one peak via connected components. */
+function windowMax(arr, n, radius) {
+  const out = new Float64Array(n);
+  const dq = new Int32Array(n);
+  let head = 0, tail = 0, nextIn = 0;
+  for (let i = 0; i < n; i++) {
+    const rightEdge = Math.min(n - 1, i + radius);
+    while (nextIn <= rightEdge) {
+      while (tail > head && arr[dq[tail-1]] <= arr[nextIn]) tail--;
+      dq[tail++] = nextIn;
+      nextIn++;
+    }
+    const leftEdge = i - radius;
+    while (dq[head] < leftEdge) head++;
+    out[i] = arr[dq[head]];
+  }
+  return out;
+}
+function maxFilter2D(dist, w, h, radius) {
+  const rowPass = new Float64Array(w*h);
+  const rowBuf = new Float64Array(w);
+  for (let y=0;y<h;y++) {
+    for (let x=0;x<w;x++) rowBuf[x] = dist[y*w+x];
+    const out = windowMax(rowBuf, w, radius);
+    for (let x=0;x<w;x++) rowPass[y*w+x] = out[x];
+  }
+  const result = new Float64Array(w*h);
+  const colBuf = new Float64Array(h);
+  for (let x=0;x<w;x++) {
+    for (let y=0;y<h;y++) colBuf[y] = rowPass[y*w+x];
+    const out = windowMax(colBuf, h, radius);
+    for (let y=0;y<h;y++) result[y*w+x] = out[y];
+  }
+  return result;
+}
 
-const SIZE_MM = {tiny:[0.05,0.6], medium:[0.05,2.0], large:[0.8,7.0], mixed:[0.05,7.0]};
+function findPeaks(dist, binary, w, h, minDistance) {
+  const maxFilt = maxFilter2D(dist, w, h, minDistance);
+  const isMax = new Uint8Array(w*h);
+  for (let i=0;i<w*h;i++) isMax[i] = (binary[i] && dist[i] > 0.5 && dist[i] >= maxFilt[i]) ? 1 : 0;
 
-// ════════════════════════════════════════════════════════════
-// MAIN RUN
-// ════════════════════════════════════════════════════════════
+  // merge flat plateaus (ties in the max-filter) into a single peak each
+  const labels = labelComponents(isMax, w, h);
+  const sx = new Map(), sy = new Map(), cnt = new Map();
+  for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
+    const i = y*w+x, l = labels[i]; if (!l) continue;
+    sx.set(l,(sx.get(l)||0)+x); sy.set(l,(sy.get(l)||0)+y); cnt.set(l,(cnt.get(l)||0)+1);
+  }
+  const peaks = [];
+  for (const [l,n] of cnt) {
+    const cx = Math.round(sx.get(l)/n), cy = Math.round(sy.get(l)/n);
+    peaks.push(cy*w+cx);
+  }
+  return peaks;
+}
+
+/* ═══════════════════════════ MARKER-CONTROLLED WATERSHED ═══════════════════════════ */
+function watershedSegment(dist, binary, peakIdx, w, h) {
+  const labels = new Int32Array(w*h);
+  for (let i=0;i<peakIdx.length;i++) labels[peakIdx[i]] = i+1;
+
+  let maxDist = 0;
+  for (let i=0;i<w*h;i++) if (binary[i] && dist[i]>maxDist) maxDist = dist[i];
+  const levels = Math.max(1, Math.ceil(maxDist)+1);
+  const buckets = Array.from({length: levels}, () => []);
+  const levelOf = d => { let l = Math.round(maxDist-d); return l<0?0:(l>=levels?levels-1:l); };
+
+  const inQueue = new Uint8Array(w*h);
+  const nbrDX = [1,-1,0,0], nbrDY = [0,0,1,-1];
+
+  function enqueueNeighbors(x, y) {
+    for (let k=0;k<4;k++) {
+      const nx=x+nbrDX[k], ny=y+nbrDY[k];
+      if (nx<0||ny<0||nx>=w||ny>=h) continue;
+      const ni = ny*w+nx;
+      if (binary[ni] && labels[ni]===0 && !inQueue[ni]) {
+        buckets[levelOf(dist[ni])].push(ni);
+        inQueue[ni] = 1;
+      }
+    }
+  }
+  for (let i=0;i<peakIdx.length;i++) enqueueNeighbors(peakIdx[i]%w, (peakIdx[i]/w)|0);
+
+  for (let lvl=0; lvl<levels; lvl++) {
+    const bucket = buckets[lvl];
+    for (let bi=0; bi<bucket.length; bi++) {
+      const i = bucket[bi];
+      if (labels[i] !== 0) continue;
+      const x = i % w, y = (i / w) | 0;
+      let foundLabel = 0, conflict = false;
+      for (let k=0;k<4;k++) {
+        const nx=x+nbrDX[k], ny=y+nbrDY[k];
+        if (nx<0||ny<0||nx>=w||ny>=h) continue;
+        const ni = ny*w+nx;
+        if (labels[ni] > 0) {
+          if (foundLabel===0) foundLabel = labels[ni];
+          else if (labels[ni] !== foundLabel) conflict = true;
+        }
+      }
+      if (conflict || foundLabel===0) continue;
+      labels[i] = foundLabel;
+      enqueueNeighbors(x, y);
+    }
+  }
+  return labels;
+}
+
+/* ═══════════════════════════ REGION PROPERTIES ═══════════════════════════ */
+function convexHull(points) {
+  const pts = points.slice().sort((a,b) => a[0]-b[0] || a[1]-b[1]);
+  if (pts.length < 3) return pts;
+  const cross = (o,a,b) => (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0]);
+  const lower = [];
+  for (const p of pts) {
+    while (lower.length>=2 && cross(lower[lower.length-2], lower[lower.length-1], p) <= 0) lower.pop();
+    lower.push(p);
+  }
+  const upper = [];
+  for (let i=pts.length-1;i>=0;i--) {
+    const p = pts[i];
+    while (upper.length>=2 && cross(upper[upper.length-2], upper[upper.length-1], p) <= 0) upper.pop();
+    upper.push(p);
+  }
+  lower.pop(); upper.pop();
+  return lower.concat(upper);
+}
+function polygonArea(poly) {
+  if (poly.length < 3) return 0;
+  let a = 0;
+  for (let i=0;i<poly.length;i++) {
+    const [x1,y1] = poly[i], [x2,y2] = poly[(i+1)%poly.length];
+    a += x1*y2 - x2*y1;
+  }
+  return Math.abs(a)/2;
+}
+
+function regionProps(labels, binary, w, h, nLabels) {
+  const area = new Int32Array(nLabels+1);
+  const sx = new Float64Array(nLabels+1), sy = new Float64Array(nLabels+1);
+  const perim = new Int32Array(nLabels+1);
+  const boundary = Array.from({length: nLabels+1}, () => []);
+
+  for (let y=0;y<h;y++) for (let x=0;x<w;x++) {
+    const i = y*w+x, l = labels[i]; if (!l) continue;
+    area[l]++; sx[l]+=x; sy[l]+=y;
+    const isBorder = (x===0||labels[i-1]!==l) || (x===w-1||labels[i+1]!==l) ||
+                      (y===0||labels[i-w]!==l) || (y===h-1||labels[i+w]!==l);
+    if (isBorder) { perim[l]++; boundary[l].push([x,y]); }
+  }
+
+  const props = [];
+  for (let l=1;l<=nLabels;l++) {
+    if (!area[l]) continue;
+    const hull = convexHull(boundary[l]);
+    const hullArea = Math.max(polygonArea(hull), area[l]);
+    props.push({
+      label: l, area: area[l], cx: sx[l]/area[l], cy: sy[l]/area[l],
+      perimeter: perim[l], solidity: area[l]/hullArea,
+    });
+  }
+  return props;
+}
+
+/* ═══════════════════════════ TEXT/ETCHING CLUSTER REJECTION ═══════════════════════════ */
+function rejectTextClusters(items, typicalArea, clusterRadius, smallFrac, minGroup) {
+  const smallIdx = [];
+  for (let i=0;i<items.length;i++) if (items[i].area < smallFrac*typicalArea) smallIdx.push(i);
+  if (smallIdx.length < minGroup) return items;
+
+  const cell = clusterRadius;
+  const grid = new Map();
+  const gkey = (gx,gy) => gx*100003+gy;
+  for (const idx of smallIdx) {
+    const gx = Math.floor(items[idx].cx/cell), gy = Math.floor(items[idx].cy/cell);
+    const k = gkey(gx,gy);
+    if (!grid.has(k)) grid.set(k, []);
+    grid.get(k).push(idx);
+  }
+
+  const parent = new Map(smallIdx.map(i => [i,i]));
+  const find = x => { while (parent.get(x)!==x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  const union = (a,b) => { const ra=find(a), rb=find(b); if (ra!==rb) parent.set(ra,rb); };
+
+  const r2 = clusterRadius*clusterRadius;
+  for (const idx of smallIdx) {
+    const gx = Math.floor(items[idx].cx/cell), gy = Math.floor(items[idx].cy/cell);
+    for (let dx=-1;dx<=1;dx++) for (let dy=-1;dy<=1;dy++) {
+      const bucket = grid.get(gkey(gx+dx,gy+dy));
+      if (!bucket) continue;
+      for (const j of bucket) {
+        if (j <= idx) continue;
+        const ddx = items[idx].cx-items[j].cx, ddy = items[idx].cy-items[j].cy;
+        if (ddx*ddx+ddy*ddy <= r2) union(idx,j);
+      }
+    }
+  }
+
+  const groups = new Map();
+  for (const idx of smallIdx) {
+    const root = find(idx);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(idx);
+  }
+  const reject = new Set();
+  for (const members of groups.values()) if (members.length >= minGroup) for (const m of members) reject.add(m);
+
+  return items.filter((_, i) => !reject.has(i));
+}
+
+/* ═══════════════════════════ MAIN PIPELINE ═══════════════════════════ */
 function runAnalysis() {
-  if (!loadedImg) { alert('Please load an image first.'); return; }
-  document.getElementById('run-btn').disabled=true;
-  document.getElementById('log').textContent='';
-  setStatus('Running…');
-  setTimeout(_run, 60);   // allow UI to repaint before blocking computation
+  if (!loadedImg) return;
+  runBtn.disabled = true;
+  logEl.textContent = '';
+  document.getElementById('result').style.display = 'none';
+  setTimeout(_run, 30);
 }
 
 function _run() {
   try {
-    const plateType = document.getElementById('plate').value;
-    const sizeKey   = document.getElementById('size').value;
-    const hasGrid   = document.getElementById('grid').checked;
-    const satMm     = parseFloat(document.getElementById('sat').value)||0;
-    const minCirc   = parseFloat(document.getElementById('circ').value)||0.30;
-    let   bgSigmaIn = parseInt(document.getElementById('sigma').value)||0;
-    const toff      = parseInt(document.getElementById('toff').value)||0;
-    const manStr    = document.getElementById('manual').value.trim();
-    const manual    = manStr ? parseInt(manStr) : null;
+    const t0 = performance.now();
+    const thresholdOffset = parseInt(document.getElementById('offset').value) || 0;
+    const dishDiameterMm = parseFloat(document.getElementById('diam').value) || 90;
+    const manStr = document.getElementById('manual').value.trim();
+    const manual = manStr ? parseInt(manStr) : null;
 
-    const {c,sc,w,h} = resized(loadedImg);
-    log(`Processing at ${w}×${h} px`);
+    const { c, sc, w, h } = resized(loadedImg, MAX_DIM);
+    log(`Processing at ${w}×${h}px`);
+    const imgData = c.getContext('2d').getImageData(0, 0, w, h);
+    const gray = toGray(imgData.data, w*h);
 
-    const imgData = c.getContext('2d').getImageData(0,0,w,h);
-    const gray    = toGray(imgData.data, w*h);
-    log('Grayscale done');
+    log('Locating dish…');
+    const dish = detectDish(gray, w, h);
+    log(`Dish: centre (${dish.cx.toFixed(0)},${dish.cy.toFixed(0)})  radius ${dish.r.toFixed(0)}px`);
 
-    log('Detecting dish…');
-    const {cx,cy,r} = detectDish(gray,w,h);
-    log(`Dish: centre (${Math.round(cx)},${Math.round(cy)}), radius ${Math.round(r)} px`);
+    const agarR = detectAgarRadius(gray, dish.cx, dish.cy, dish.r, w, h);
+    log(`Agar boundary: ${agarR}px (rim excluded ${(100*(dish.r-agarR)/dish.r).toFixed(1)}%)`);
 
-    const mask = dishMask(w,h,cx,cy,r);
+    const mask = dishMask(w, h, dish.cx, dish.cy, agarR);
 
-    const bgSigma = Math.max(5, bgSigmaIn ||
-      (plateType==='light_agar' ? Math.round(r*0.05) : Math.round(r*0.03)));
-    log(`BG sigma: ${bgSigma}`);
+    const sigma = Math.max(15, Math.round(agarR*0.04));
+    const bg = gaussBlur(gray, w, h, sigma);
+    const rawCorr = new Float32Array(w*h);
+    let mn=Infinity, mx=-Infinity;
+    for (let i=0;i<w*h;i++) { const v = Math.max(0, gray[i]-bg[i]); rawCorr[i]=v; if(v<mn)mn=v; if(v>mx)mx=v; }
+    const rng = (mx-mn)||1;
+    const corrected = new Uint8Array(w*h);
+    for (let i=0;i<w*h;i++) corrected[i] = mask[i] ? Math.round((rawCorr[i]-mn)*255/rng) : 0;
 
-    log('Subtracting background…');
-    const corr = subtractBg(gray,w,h,mask,bgSigma);
+    const otsuVal = otsu(corrected, mask, w, h);
+    const adjVal = Math.max(0, Math.min(255, otsuVal + thresholdOffset));
+    log(`Threshold: otsu=${otsuVal}  adjusted=${adjVal}`);
+    let binary = new Uint8Array(w*h);
+    for (let i=0;i<w*h;i++) binary[i] = (mask[i] && corrected[i] > adjVal) ? 1 : 0;
+    binary = morphOpen(binary, w, h, 3);
 
-    const t = otsu(corr,mask,w,h) + toff;
-    log(`Threshold: ${t}`);
+    log('Splitting touching colonies (distance transform + watershed)…');
+    const dist = distanceTransform(binary, w, h);
+    const minDistance = Math.max(3, Math.round(agarR*0.0073));
+    const peaks = findPeaks(dist, binary, w, h, minDistance);
+    const labels = watershedSegment(dist, binary, peaks, w, h);
 
-    let bin = new Uint8Array(w*h);
-    for (let i=0;i<w*h;i++) bin[i]=(mask[i]&&corr[i]>t)?1:0;
+    const props = regionProps(labels, binary, w, h, peaks.length);
+    log(`Raw blobs: ${props.length}`);
 
-    if (hasGrid) { log('Removing grid lines…'); bin=removeGrid(bin,w,h,r); }
-
-    log('Finding colonies…');
-    const all = findColonies(bin,w,h);
-    log(`Raw blobs: ${all.length}`);
-
-    const [minMm,maxMm] = SIZE_MM[sizeKey]||SIZE_MM.medium;
-    const minA = Math.max(10, mmPx(minMm,r));
-    const maxA = mmPx(maxMm,r);
-    const minSat = satMm>0 ? mmPx(satMm,r) : 0;
-
-    const colonies = all.filter(b =>
-      b.area>=minA && b.area<=maxA && b.circ>=minCirc && b.area>=minSat);
-
-    log(`Colonies detected: ${colonies.length}`);
-    if (manual!==null) {
-      const acc=(100*(1-Math.abs(colonies.length-manual)/manual)).toFixed(1);
-      log(`Accuracy vs manual (${manual}): ${acc}%`);
-      document.getElementById('res-acc').textContent = `${acc}% vs manual count of ${manual}`;
-    } else {
-      document.getElementById('res-acc').textContent = '';
+    const minArea = Math.PI * (MIN_COLONY_DIAM_FRAC*agarR)**2;
+    const maxArea = Math.PI * (MAX_COLONY_DIAM_FRAC*agarR)**2;
+    const candidates = [];
+    for (const p of props) {
+      if (p.area < minArea || p.area > maxArea) continue;
+      if (p.perimeter < 1) continue;
+      const circ = (4*Math.PI*p.area) / (p.perimeter**2);
+      if (circ >= MIN_CIRCULARITY && p.solidity >= MIN_SOLIDITY) candidates.push(p);
     }
 
-    drawResults(colonies, cx, cy, r, 1/sc, manual);
-    setStatus(`Done — ${colonies.length} colonies detected.`);
-  } catch(e) {
-    log('ERROR: '+e.message); setStatus('Error — '+e.message);
+    let colonies = candidates;
+    if (candidates.length) {
+      const areas = candidates.map(p => p.area).sort((a,b)=>a-b);
+      const typicalArea = areas[areas.length>>1];
+      const typicalDiam = 2*Math.sqrt(typicalArea/Math.PI);
+      colonies = rejectTextClusters(candidates, typicalArea, 1.5*typicalDiam, 0.5, 4);
+    }
+    log(`Candidates: ${candidates.length}  →  after label/artifact rejection: ${colonies.length}`);
+
+    const count = colonies.length;
+    const mmPerPx = dishDiameterMm / (2*agarR);
+    log(`Done in ${((performance.now()-t0)/1000).toFixed(1)}s`);
+
+    let acc = null;
+    if (manual) acc = 100*(1-Math.abs(count-manual)/manual);
+
+    drawResults(colonies, dish.cx, dish.cy, agarR, 1/sc, count, manual, acc);
+    log(`FINAL COUNT: ${count}` + (acc!==null ? `   manual=${manual}   accuracy=${acc.toFixed(1)}%` : ''));
+  } catch (e) {
+    log('ERROR: ' + e.message);
+    console.error(e);
   }
-  document.getElementById('run-btn').disabled=false;
+  runBtn.disabled = false;
 }
 
-// ════════════════════════════════════════════════════════════
-// DRAWING
-// ════════════════════════════════════════════════════════════
+/* ═══════════════════════════ DRAWING ═══════════════════════════ */
 let resultDataURL = null;
-
-function drawResults(colonies, cx, cy, r, s, manual) {
-  const rc  = document.getElementById('res-canvas');
-  rc.width  = loadedImg.width;
-  rc.height = loadedImg.height;
+function drawResults(colonies, cx, cy, r, s, count, manual, acc) {
+  const rc = document.getElementById('res-canvas');
+  rc.width = loadedImg.width; rc.height = loadedImg.height;
   const ctx = rc.getContext('2d');
-
   ctx.drawImage(loadedImg, 0, 0);
 
-  // Dish outline
   ctx.beginPath();
   ctx.arc(cx*s, cy*s, r*s, 0, 2*Math.PI);
-  ctx.strokeStyle='rgba(255,255,80,0.45)';
-  ctx.lineWidth=2;
+  ctx.strokeStyle = 'rgba(255,210,60,0.9)';
+  ctx.lineWidth = Math.max(2, r*s/220);
   ctx.stroke();
 
-  // Colony circles
-  ctx.strokeStyle='#00e5ff';
-  ctx.lineWidth=Math.max(1, r*s/180);
-  for (const col of colonies) {
+  ctx.strokeStyle = '#22e06a';
+  ctx.lineWidth = Math.max(1.5, r*s/260);
+  for (const p of colonies) {
+    const rad = Math.max(3, Math.sqrt(p.area/Math.PI)*s + 3*s);
     ctx.beginPath();
-    ctx.arc(col.cx*s, col.cy*s, Math.max(2, col.r*s), 0, 2*Math.PI);
+    ctx.arc(p.cx*s, p.cy*s, rad, 0, 2*Math.PI);
     ctx.stroke();
   }
 
-  // Count label
-  const fs = Math.round(loadedImg.width/22);
-  ctx.font=`bold ${fs}px -apple-system,sans-serif`;
-  ctx.fillStyle='rgba(0,0,0,0.45)';
-  ctx.fillText(colonies.length, 22, fs+22);
-  ctx.fillStyle='#00e5ff';
-  ctx.fillText(colonies.length, 20, fs+20);
-
-  // Show panel
-  document.getElementById('res-count').textContent = `${colonies.length} colonies`;
-  document.getElementById('result-panel').style.display='block';
-  document.getElementById('res-sep').style.display='block';
-
+  document.getElementById('res-count').textContent = `${count} colonies`;
+  const accEl = document.getElementById('res-acc');
+  if (acc !== null) {
+    accEl.textContent = `${acc.toFixed(1)}% vs manual count of ${manual}`;
+    accEl.className = acc >= 90 ? 'good' : '';
+  } else {
+    accEl.textContent = '';
+    accEl.className = '';
+  }
+  document.getElementById('result').style.display = 'block';
   resultDataURL = rc.toDataURL('image/png');
 }
 
-function downloadResult() {
+document.getElementById('dl-btn').addEventListener('click', () => {
   if (!resultDataURL) return;
-  Object.assign(document.createElement('a'),
-    {href:resultDataURL, download:'colony_result.png'}).click();
-}
-
-// ════════════════════════════════════════════════════════════
-// INIT
-// ════════════════════════════════════════════════════════════
-setMode('default');
-initAnim();
+  Object.assign(document.createElement('a'), { href: resultDataURL, download: 'colony_result.png' }).click();
+});
 </script>
 </body>
 </html>
